@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from "react";
 import API_URLS from "../../config";
 import TransactionModal from "../TransactionModal";
+import WalletConnectTransactionModal from "../WalletConnectTransactionModal";
 import NFTMessageBox from "../NFTMessageBox";
 import {X} from "lucide-react";
 import nft_pic from "../../assets/nft.png";
@@ -13,6 +14,12 @@ const OutgoingOfferCard = ({ transfer, index, onAction, myWalletAddress }) => {
   const [isMessageBoxVisible, setIsMessageBoxVisible] = useState(false);
   const [messageBoxType, setMessageBoxType] = useState("success");
   const [messageBoxText, setMessageBoxText] = useState("");
+  
+  // WalletConnect support
+  const [walletType, setWalletType] = useState(null); // 'xumm' | 'walletconnect'
+  const [unsignedTransaction, setUnsignedTransaction] = useState(null);
+  const [isWalletConnectModalVisible, setIsWalletConnectModalVisible] = useState(false);
+  const [wcTransactionType, setWcTransactionType] = useState(null); // 'cancel'
 
   const wsRef = useRef(null);
 
@@ -70,10 +77,25 @@ const OutgoingOfferCard = ({ transfer, index, onAction, myWalletAddress }) => {
           return;
         }
 
-        console.log(data.refs, "data refs");
-        setQrCodeUrl(data.refs.qr_png);
-        setWebsocketUrl(data.refs.websocket_status);
-        setIsQrModalVisible(true);
+        // Branch by wallet type
+        if (data?.type === 'walletconnect') {
+          // WalletConnect path: show transaction preview
+          setWalletType('walletconnect');
+          setUnsignedTransaction(data.transaction);
+          setWcTransactionType('cancel');
+          setIsWalletConnectModalVisible(true);
+        } else if (data?.refs) {
+          // Xumm path: show QR code
+          setWalletType('xumm');
+          console.log(data.refs, "data refs");
+          setQrCodeUrl(data.refs.qr_png);
+          setWebsocketUrl(data.refs.websocket_status);
+          setIsQrModalVisible(true);
+        } else {
+          setMessageBoxType("error");
+          setMessageBoxText("Unexpected response from server. Please try again.");
+          setIsMessageBoxVisible(true);
+        }
         // onAction();
       }
     } catch (error) {
@@ -193,6 +215,25 @@ const OutgoingOfferCard = ({ transfer, index, onAction, myWalletAddress }) => {
         qrCodeUrl={qrCodeUrl}
         transactionStatus={transactionStatus}
       />
+      
+      <WalletConnectTransactionModal
+        isOpen={isWalletConnectModalVisible}
+        onClose={() => setIsWalletConnectModalVisible(false)}
+        unsignedTransaction={unsignedTransaction}
+        transactionType={wcTransactionType}
+        sender={myWalletAddress}
+        backendUrl={API_URLS.backendUrl}
+        onSuccess={() => {
+          setIsWalletConnectModalVisible(false);
+          setIsMessageBoxVisible(true);
+          setMessageBoxType("success");
+          setMessageBoxText("Transaction submitted successfully!");
+          if (onAction) {
+            setTimeout(() => onAction(), 1500);
+          }
+        }}
+      />
+      
       <NFTMessageBox
         isOpen={isMessageBoxVisible}
         onClose={() => setIsMessageBoxVisible(false)}

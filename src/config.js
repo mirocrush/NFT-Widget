@@ -9,6 +9,7 @@ const API_URLS = {
   brokerWalletAddress: process.env.REACT_APP_BROKER_WALLET_ADDRESS,
   systemWalletAddress: process.env.REACT_APP_SYSTEM_WALLET_ADDRESS,
   bithompToken: process.env.REACT_APP_BITHOMP_TOKEN,
+  walletConnectProjectId: process.env.REACT_APP_WALLETCONNECT_PROJECT_ID,
 };
 
 export default API_URLS;
