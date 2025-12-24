@@ -404,6 +404,8 @@ const MatrixClientProvider = () => {
       setLoading(true);
       try {
         const events = await widgetApi.receiveStateEvents(STATE_EVENT_ROOM_MEMBER);
+        console.log("widgetApi => ", widgetApi)
+        console.log("widgetApi.widgetParameters => ", widgetApi.widgetParameters)
         console.log("events : ", events);
         const usersList = events
           .filter((item) => {

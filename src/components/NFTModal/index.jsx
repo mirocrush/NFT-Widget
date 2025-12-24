@@ -17,7 +17,6 @@ import {
 import { User, Package, Tag, X, Send, Gavel, Gift, Copy } from "lucide-react";
 import API_URLS from "../../config";
 import TransactionModal from "../TransactionModal";
-import WalletConnectTransactionModal from "../WalletConnectTransactionModal";
 import NFTMessageBox from "../NFTMessageBox";
 import LoadingOverlayForCard from "../LoadingOverlayForCard";
 import { useCachedImage } from "../../hooks/useCachedImage";
@@ -90,13 +89,6 @@ const NFTModal = ({
   const [transactionStatus, setTransactionStatus] = useState("");
   const [isQrModalVisible, setIsQrModalVisible] = useState(false);
   const [createdOfferType, setCreatedOfferType] = useState("create_buy_offer");
-  
-  // WalletConnect support
-  const [walletType, setWalletType] = useState(null); // 'xumm' | 'walletconnect'
-  const [unsignedTransaction, setUnsignedTransaction] = useState(null);
-  const [isWalletConnectModalVisible, setIsWalletConnectModalVisible] = useState(false);
-  const [wcTransactionType, setWcTransactionType] = useState(null); // 'sell' | 'buy' | 'accept' | 'cancel'
-  
   // Messages
   const [isMessageBoxVisible, setIsMessageBoxVisible] = useState(false);
   const [messageBoxType, setMessageBoxType] = useState("success");
@@ -241,26 +233,12 @@ const NFTModal = ({
         setIsMessageBoxVisible(true);
         return;
       }
-
-      // Branch by wallet type
-      if (data?.type === 'walletconnect') {
-        // WalletConnect path: show transaction preview
-        setWalletType('walletconnect');
-        setUnsignedTransaction(data.transaction);
-        setWcTransactionType('sell');  // Transfer is create-offer with amount "0"
-        setIsWalletConnectModalVisible(true);
-      } else if (data?.refs) {
-        // Xumm path: show QR code
-        setWalletType('xumm');
+      if (data?.refs) {
         setQrCodeUrl(data.refs.qr_png);
         setWebsocketUrl(data.refs.websocket_status);
         setIsQrModalVisible(true);
-      } else {
-        setMessageBoxType("error");
-        setMessageBoxText("Unexpected response from server. Please try again.");
-        setIsMessageBoxVisible(true);
       }
-    } catch (error) {
+    } catch {
       setIsLoading(false);
       setMessageBoxType("error");
       setMessageBoxText("Error creating transfer offer. Please try again.");
@@ -318,26 +296,12 @@ const NFTModal = ({
         setIsMessageBoxVisible(true);
         return;
       }
-
-      // Branch by wallet type
-      if (data?.type === 'walletconnect') {
-        // WalletConnect path: show transaction preview
-        setWalletType('walletconnect');
-        setUnsignedTransaction(data.transaction);
-        setWcTransactionType('sell');
-        setIsWalletConnectModalVisible(true);
-      } else if (data?.refs) {
-        // Xumm path: show QR code
-        setWalletType('xumm');
+      if (data?.refs) {
         setQrCodeUrl(data.refs.qr_png);
         setWebsocketUrl(data.refs.websocket_status);
         setIsQrModalVisible(true);
-      } else {
-        setMessageBoxType("error");
-        setMessageBoxText("Unexpected response from server. Please try again.");
-        setIsMessageBoxVisible(true);
       }
-    } catch (error) {
+    } catch {
       setIsLoading(false);
       setMessageBoxType("error");
       setMessageBoxText("Error creating sell offer. Please try again.");
@@ -384,26 +348,12 @@ const NFTModal = ({
         setIsMessageBoxVisible(true);
         return;
       }
-
-      // Branch by wallet type
-      if (data?.type === 'walletconnect') {
-        // WalletConnect path: show transaction preview
-        setWalletType('walletconnect');
-        setUnsignedTransaction(data.transaction);
-        setWcTransactionType('buy');
-        setIsWalletConnectModalVisible(true);
-      } else if (data?.refs) {
-        // Xumm path: show QR code
-        setWalletType('xumm');
+      if (data?.refs) {
         setQrCodeUrl(data.refs.qr_png);
         setWebsocketUrl(data.refs.websocket_status);
         setIsQrModalVisible(true);
-      } else {
-        setMessageBoxType("error");
-        setMessageBoxText("Unexpected response from server. Please try again.");
-        setIsMessageBoxVisible(true);
       }
-    } catch (error) {
+    } catch {
       setIsLoading(false);
       setMessageBoxType("error");
       setMessageBoxText("Error creating buy offer. Please try again.");
@@ -839,23 +789,6 @@ const NFTModal = ({
         transactionStatus={transactionStatus}
       />
 
-      <WalletConnectTransactionModal
-        isOpen={isWalletConnectModalVisible}
-        onClose={() => setIsWalletConnectModalVisible(false)}
-        unsignedTransaction={unsignedTransaction}
-        transactionType={wcTransactionType}
-        sender={myWalletAddress}
-        backendUrl={API_URLS.backendUrl}
-        onSuccess={() => {
-          setIsWalletConnectModalVisible(false);
-          setIsMessageBoxVisible(true);
-          setMessageBoxType("success");
-          setMessageBoxText("Transaction submitted successfully!");
-          if (onAction) {
-            setTimeout(() => onAction(), 1500);
-          }
-        }}
-      />
 
       <NFTMessageBox
         isOpen={isMessageBoxVisible}
