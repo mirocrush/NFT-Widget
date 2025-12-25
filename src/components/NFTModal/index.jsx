@@ -21,13 +21,6 @@ import NFTMessageBox from "../NFTMessageBox";
 import LoadingOverlayForCard from "../LoadingOverlayForCard";
 import { useCachedImage } from "../../hooks/useCachedImage";
 import nft_pic from "../../assets/nft.png";
-import { useAuthProvider } from "../../context/AuthProviderContext";
-import {
-  confirmTransaction,
-  extractSessionAddress,
-  getActiveSessions,
-  requestSignature,
-} from "../../services/walletConnectService";
 
 // Reusable dark-mode styles for MUI outlined inputs (Select/TextField)
 const darkFieldSx = {
@@ -96,12 +89,10 @@ const NFTModal = ({
   const [transactionStatus, setTransactionStatus] = useState("");
   const [isQrModalVisible, setIsQrModalVisible] = useState(false);
   const [createdOfferType, setCreatedOfferType] = useState("create_buy_offer");
-  const [walletConnectPayload, setWalletConnectPayload] = useState(null);
   // Messages
   const [isMessageBoxVisible, setIsMessageBoxVisible] = useState(false);
   const [messageBoxType, setMessageBoxType] = useState("success");
   const [messageBoxText, setMessageBoxText] = useState("");
-  const authProvider = useAuthProvider();
 
   const wsRef = useRef(null);
 
@@ -121,28 +112,6 @@ const NFTModal = ({
     }
   };
 
-  const extractWalletConnectTx = (data) =>
-    data?.transaction ||
-    data?.txjson ||
-    data?.txJSON ||
-    data?.preparedTx ||
-    data?.preparedTransaction ||
-    data?.payload?.txjson ||
-    data?.signedTransaction ||
-    null;
-
-  const captureWalletConnectPayload = (data) => {
-    const tx = extractWalletConnectTx(data);
-    const paymentId = data?.paymentId || data?.payment?.id || data?.id || null;
-    setWalletConnectPayload(tx ? { transaction: tx, paymentId } : null);
-  };
-
-  const getAuthToken = () =>
-    widgetApi?.widgetParameters?.accessToken ||
-    widgetApi?.widgetParameters?.access_token ||
-    API_URLS.accesstoken ||
-    undefined;
-
 
   const availableCurrencies = ["XRP"]; // extend if needed
 
@@ -155,7 +124,6 @@ const NFTModal = ({
   const description = useMemo(() => descFromMeta(nft?.metadata), [nft]);
 
   useEffect(() => {
-    if (authProvider === "walletconnect") return;
     if (!websocketUrl) return;
 
     // Close any previous socket
@@ -224,14 +192,13 @@ const NFTModal = ({
       try { ws.close(); } catch { }
       wsRef.current = null;
     };
-  }, [websocketUrl, isQrModalVisible, onAction, authProvider]);
+  }, [websocketUrl, isQrModalVisible, onAction]);
 
 
   const getMxidLocalPart = (mxid) =>
     mxid?.includes(":") ? mxid.split(":")[0]?.replace("@", "") : undefined;
 
   const handleTransfer = async () => {
-    setWalletConnectPayload(null);
     if (selectedUser === "all") {
       setMessageBoxType("error");
       setMessageBoxText("Please select a user to transfer the NFT.");
@@ -266,17 +233,6 @@ const NFTModal = ({
         setIsMessageBoxVisible(true);
         return;
       }
-      if (authProvider === "walletconnect") {
-        captureWalletConnectPayload(data);
-        setTransactionStatus(
-          extractWalletConnectTx(data)
-            ? "Connect via WalletConnect to sign this transfer."
-            : "WalletConnect payload missing. Please retry or use Xumm."
-        );
-        setIsQrModalVisible(true);
-        return;
-      }
-
       if (data?.refs) {
         setQrCodeUrl(data.refs.qr_png);
         setWebsocketUrl(data.refs.websocket_status);
@@ -291,7 +247,6 @@ const NFTModal = ({
   };
 
   const handleSellOffer = async () => {
-    setWalletConnectPayload(null);
     if (!isPositive(amount)) {
       setMessageBoxType("error");
       setMessageBoxText("Please enter a valid positive amount.");
@@ -341,17 +296,6 @@ const NFTModal = ({
         setIsMessageBoxVisible(true);
         return;
       }
-      if (authProvider === "walletconnect") {
-        captureWalletConnectPayload(data);
-        setTransactionStatus(
-          extractWalletConnectTx(data)
-            ? "Connect via WalletConnect to sign this sell offer."
-            : "WalletConnect payload missing. Please retry or use Xumm."
-        );
-        setIsQrModalVisible(true);
-        return;
-      }
-
       if (data?.refs) {
         setQrCodeUrl(data.refs.qr_png);
         setWebsocketUrl(data.refs.websocket_status);
@@ -366,7 +310,6 @@ const NFTModal = ({
   };
 
   const handleBuyOffer = async () => {
-    setWalletConnectPayload(null);
     if (!isPositive(amount)) {
       setMessageBoxType("error");
       setMessageBoxText("Please enter a valid positive amount.");
@@ -405,17 +348,6 @@ const NFTModal = ({
         setIsMessageBoxVisible(true);
         return;
       }
-      if (authProvider === "walletconnect") {
-        captureWalletConnectPayload(data);
-        setTransactionStatus(
-          extractWalletConnectTx(data)
-            ? "Connect via WalletConnect to sign this buy offer."
-            : "WalletConnect payload missing. Please retry or use Xumm."
-        );
-        setIsQrModalVisible(true);
-        return;
-      }
-
       if (data?.refs) {
         setQrCodeUrl(data.refs.qr_png);
         setWebsocketUrl(data.refs.websocket_status);
@@ -435,86 +367,11 @@ const NFTModal = ({
     setSelectedUser("all");
     setIsListing(false);
     setActiveTab("details");
-    setWalletConnectPayload(null);
   };
 
   const handleClose = () => {
     resetForm();
     onClose?.();
-  };
-
-  const startWalletConnectSigning = () => {
-    const token = getAuthToken();
-    if (!walletConnectPayload?.transaction) {
-      const msg = "WalletConnect transaction data is missing. Please retry.";
-      setTransactionStatus(msg);
-      setMessageBoxType("error");
-      setMessageBoxText(msg);
-      setIsMessageBoxVisible(true);
-      return;
-    }
-
-    const begin = async () => {
-      try {
-        setTransactionStatus("Checking your WalletConnect session…");
-
-        const sessionsResp = await getActiveSessions(token);
-        const session =
-          sessionsResp?.sessions?.[0] ||
-          (Array.isArray(sessionsResp) && sessionsResp[0]) ||
-          null;
-
-        if (!session) {
-          throw new Error("No active WalletConnect session found. Please reconnect your wallet.");
-        }
-
-        const sessionId = session.topic || session.sessionId || session.id;
-        const sessionAddress = extractSessionAddress(session);
-        const userAddress = sessionAddress || myWalletAddress;
-
-        const signature = await requestSignature({
-          transaction: walletConnectPayload.transaction,
-          userAddress,
-          sessionId,
-          paymentId: walletConnectPayload.paymentId,
-          token,
-        });
-
-        if (!signature?.success) {
-          throw new Error(signature?.error || "Signature request failed.");
-        }
-
-        setTransactionStatus("Signature received. Finalizing…");
-
-        if (walletConnectPayload.paymentId && signature.txHash) {
-          try {
-            await confirmTransaction({
-              paymentId: walletConnectPayload.paymentId,
-              txHash: signature.txHash,
-              ledgerIndex: signature.ledgerIndex,
-              status: "success",
-              token,
-            });
-          } catch (err) {
-            console.warn("WalletConnect confirmTransaction warning", err);
-          }
-        }
-
-        setMessageBoxType("success");
-        setMessageBoxText("Transaction signed successfully via WalletConnect.");
-        setIsMessageBoxVisible(true);
-        setIsQrModalVisible(false);
-        onAction?.();
-      } catch (err) {
-        const msg = err?.message || "WalletConnect signing failed.";
-        setTransactionStatus(msg);
-        setMessageBoxType("error");
-        setMessageBoxText(msg);
-        setIsMessageBoxVisible(true);
-      }
-    };
-
-    begin();
   };
 
   if (!nft) return null;
@@ -930,7 +787,6 @@ const NFTModal = ({
         onClose={() => closeQrModal("Cancelled", "Transaction flow cancelled.", "info")}
         qrCodeUrl={qrCodeUrl}
         transactionStatus={transactionStatus}
-        onWalletConnectSignIn={startWalletConnectSigning}
       />
 
 

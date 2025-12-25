@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useWidgetApi } from "@matrix-widget-toolkit/react";
 import { Tabs, Tab } from "@mui/material";
 import { motion, AnimatePresence } from "framer-motion";
@@ -15,7 +15,6 @@ import ImageCacheDebugPanel from "./ImageCacheDebugPanel";
 import { Package } from "lucide-react";
 import { useTheme } from "../context/ThemeContext";
 import imageCache from "../services/imageCache";
-import { AuthProviderProvider } from "../context/AuthProviderContext";
 
 const getImageData = async (nft) => {
   let URI = "";
@@ -239,29 +238,6 @@ const applyNftTransfer = (prevData, { nftId, sellerWallet, buyerWallet }) => {
 };
 // ---------------------------------------------------
 
-const extractAuthProvider = (widgetApi) => {
-  const params = widgetApi?.widgetParameters || {};
-  const fromWidget = params.authProvider || params.authprovider;
-  if (fromWidget) return fromWidget;
-
-  // Fallbacks: query string then fragment
-  try {
-    const searchParams = new URLSearchParams(window.location.search || "");
-    if (searchParams.get("authProvider")) return searchParams.get("authProvider");
-  } catch (err) {
-    console.warn("Failed to read authProvider from search params", err);
-  }
-
-  try {
-    const hashParams = new URLSearchParams((window.location.hash || "").replace(/^#/, ""));
-    if (hashParams.get("authProvider")) return hashParams.get("authProvider");
-  } catch (err) {
-    console.warn("Failed to read authProvider from hash params", err);
-  }
-
-  return "xumm";
-};
-
 const MatrixClientProvider = () => {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const widgetApi = useWidgetApi();
@@ -278,7 +254,6 @@ const MatrixClientProvider = () => {
   const [loadedCollections, setLoadedCollections] = useState({}); // Cache for loaded NFTs by collection
   const [loadingCollections, setLoadingCollections] = useState({}); // Track loading state per collection
   const [showCacheDebug, setShowCacheDebug] = useState(false); // Debug panel toggle
-  const authProvider = useMemo(() => (extractAuthProvider(widgetApi) || "xumm").toLowerCase(), [widgetApi]);
 
   // Function to load collections metadata AND the user's NFTs grouped by collection
   const loadUserCollections = async (walletAddress) => {
@@ -429,9 +404,13 @@ const MatrixClientProvider = () => {
       setLoading(true);
       try {
         const events = await widgetApi.receiveStateEvents(STATE_EVENT_ROOM_MEMBER);
+        
         console.log("widgetApi.authProvider => ", widgetApi.authProvider)
         console.log("widgetApi.widgetParameters => ", widgetApi.widgetParameters)
-        console.log("authProvider (resolved) : ", authProvider);
+        
+        const urlParams = new URLSearchParams(window.location.search);
+        const authProvider = urlParams.get('authProvider'); // "xumm"
+        console.log("authProvider : ", authProvider);
         console.log("events : ", events);
         const usersList = events
           .filter((item) => {
@@ -761,146 +740,144 @@ const MatrixClientProvider = () => {
   };
 
   return (
-    <AuthProviderProvider authProvider={authProvider}>
-      <div className="min-h-screen bg-gradient-to-br from-white/90 to-blue-50/90 dark:from-gray-900/90 dark:to-gray-800/90 backdrop-blur-sm">
-        {loading ? (
-          <LoadingOverlay message="Loading..." />
-        ) : (
-          <div className="h-screen flex flex-col">
-            {/* Header */}
-            <div className="backdrop-blur-md bg-white/90 dark:bg-gray-900/90 shadow-lg border-b border-gray-200/50 dark:border-gray-800/50 px-6 py-4 transition-all duration-300">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center shadow-md">
-                      <Package className="text-white w-5 h-5" />
-                    </div>
-                    <div>
-                      <h1 className="text-2xl font-bold text-gray-900 dark:text-white tracking-tight">P2P NFT Widget</h1>
-                      <p className="text-sm text-gray-600 dark:text-gray-400">Trade NFTs with room members</p>
-                    </div>
+    <div className="min-h-screen bg-gradient-to-br from-white/90 to-blue-50/90 dark:from-gray-900/90 dark:to-gray-800/90 backdrop-blur-sm">
+      {loading ? (
+        <LoadingOverlay message="Loading..." />
+      ) : (
+        <div className="h-screen flex flex-col">
+          {/* Header */}
+          <div className="backdrop-blur-md bg-white/90 dark:bg-gray-900/90 shadow-lg border-b border-gray-200/50 dark:border-gray-800/50 px-6 py-4 transition-all duration-300">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center shadow-md">
+                    <Package className="text-white w-5 h-5" />
+                  </div>
+                  <div>
+                    <h1 className="text-2xl font-bold text-gray-900 dark:text-white tracking-tight">P2P NFT Widget</h1>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">Trade NFTs with room members</p>
                   </div>
                 </div>
               </div>
             </div>
-
-            {/* Tabs */}
-            <div className="bg-white/90 dark:bg-gray-900/90 backdrop-blur-md border-b border-gray-200/50 dark:border-gray-800/50 px-2 py-1 shadow-sm transition-all duration-300">
-              <Tabs
-                value={selectedIndex}
-                onChange={(event, newIndex) => setSelectedIndex(newIndex)}
-                variant="fullWidth"
-                textColor="primary"
-                indicatorColor="primary"
-                sx={{
-                  "& .MuiTabs-indicator": {
-                    backgroundColor: "#2563eb",
-                    height: 3,
-                    borderRadius: "2px",
-                    transition: "all 0.3s cubic-bezier(.4,0,.2,1)",
-                  },
-                  "& .MuiTab-root": {
-                    color: "#64748b",
-                    fontSize: "1.1rem",
-                    fontWeight: 600,
-                    textTransform: "none",
-                    minHeight: 48,
-                    padding: "14px 0",
-                    borderRadius: "0.75rem 0.75rem 0 0",
-                    margin: "0 0.5rem",
-                    background: "none",
-                    border: "none",
-                    transition: "all 0.2s cubic-bezier(.4,0,.2,1)",
-                    "&.Mui-selected": {
-                      color: "#2563eb",
-                      background: "rgba(37,99,235,0.08)",
-                      boxShadow: "0 2px 8px 0 rgba(37,99,235,0.05)",
-                    },
-                  },
-                }}
-              >
-                <Tab label="My NFTs" className="text-gray-900 dark:text-white" />
-                <Tab label="Community NFTs" className="text-gray-900 dark:text-white" />
-                <Tab label="Offers" className="text-gray-900 dark:text-white" />
-              </Tabs>
-            </div>
-
-            {/* Content */}
-            <div className="flex-1 overflow-hidden bg-transparent">
-              <AnimatePresence mode="wait">
-                {selectedIndex === 0 && (
-                  <motion.div
-                    key="myNfts"
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -20 }}
-                    transition={{ duration: 0.3, ease: "easeOut" }}
-                    className="h-full"
-                  >
-                    <MyNFTs
-                      membersList={membersList}
-                      myNftData={myNftData}
-                      getImageData={getImageData}
-                      wgtParameters={widgetApi.widgetParameters}
-                      refreshOffers={refreshOffers}
-                      widgetApi={widgetApi}
-                      loadCollectionNFTs={handleLoadCollectionNFTs}
-                      loadingCollections={loadingCollections}
-                    />
-                  </motion.div>
-                )}
-                {selectedIndex === 1 && (
-                  <motion.div
-                    key="nfts"
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -20 }}
-                    transition={{ duration: 0.3, ease: "easeOut" }}
-                    className="h-full"
-                  >
-                    <CommunityNFTs
-                      membersList={membersList}
-                      myNftData={myNftData}
-                      getImageData={getImageData}
-                      wgtParameters={widgetApi.widgetParameters}
-                      refreshOffers={refreshOffers}
-                      widgetApi={widgetApi}
-                      loadCollectionNFTs={handleLoadCollectionNFTs}
-                      loadingCollections={loadingCollections}
-                    />
-                  </motion.div>
-                )}
-                {selectedIndex === 2 && (
-                  <motion.div
-                    key="offers"
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -20 }}
-                    transition={{ duration: 0.3, ease: "easeOut" }}
-                    className="h-full"
-                  >
-                    <Offers
-                      myWalletAddress={myOwnWalletAddress}
-                      myDisplayName={widgetApi.widgetParameters.displayName}
-                      membersList={membersList}
-                      myNftData={myNftData}
-                      widgetApi={widgetApi}
-                      isRefreshing={isRefreshing}
-                      updateUsersNFTs={updateUsersNFTs}
-                      incomingOffer={incomingOffer}
-                      cancelledOffer={cancelledOffer}
-                    />
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
           </div>
-        )}
 
-        {/* Image Cache Debug Panel */}
-        <ImageCacheDebugPanel visible={showCacheDebug} />
-      </div>
-    </AuthProviderProvider>
+          {/* Tabs */}
+          <div className="bg-white/90 dark:bg-gray-900/90 backdrop-blur-md border-b border-gray-200/50 dark:border-gray-800/50 px-2 py-1 shadow-sm transition-all duration-300">
+            <Tabs
+              value={selectedIndex}
+              onChange={(event, newIndex) => setSelectedIndex(newIndex)}
+              variant="fullWidth"
+              textColor="primary"
+              indicatorColor="primary"
+              sx={{
+                "& .MuiTabs-indicator": {
+                  backgroundColor: "#2563eb",
+                  height: 3,
+                  borderRadius: "2px",
+                  transition: "all 0.3s cubic-bezier(.4,0,.2,1)",
+                },
+                "& .MuiTab-root": {
+                  color: "#64748b",
+                  fontSize: "1.1rem",
+                  fontWeight: 600,
+                  textTransform: "none",
+                  minHeight: 48,
+                  padding: "14px 0",
+                  borderRadius: "0.75rem 0.75rem 0 0",
+                  margin: "0 0.5rem",
+                  background: "none",
+                  border: "none",
+                  transition: "all 0.2s cubic-bezier(.4,0,.2,1)",
+                  "&.Mui-selected": {
+                    color: "#2563eb",
+                    background: "rgba(37,99,235,0.08)",
+                    boxShadow: "0 2px 8px 0 rgba(37,99,235,0.05)",
+                  },
+                },
+              }}
+            >
+              <Tab label="My NFTs" className="text-gray-900 dark:text-white" />
+              <Tab label="Community NFTs" className="text-gray-900 dark:text-white" />
+              <Tab label="Offers" className="text-gray-900 dark:text-white" />
+            </Tabs>
+          </div>
+
+          {/* Content */}
+          <div className="flex-1 overflow-hidden bg-transparent">
+            <AnimatePresence mode="wait">
+              {selectedIndex === 0 && (
+                <motion.div
+                  key="myNfts"
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -20 }}
+                  transition={{ duration: 0.3, ease: "easeOut" }}
+                  className="h-full"
+                >
+                  <MyNFTs
+                    membersList={membersList}
+                    myNftData={myNftData}
+                    getImageData={getImageData}
+                    wgtParameters={widgetApi.widgetParameters}
+                    refreshOffers={refreshOffers}
+                    widgetApi={widgetApi}
+                    loadCollectionNFTs={handleLoadCollectionNFTs}
+                    loadingCollections={loadingCollections}
+                  />
+                </motion.div>
+              )}
+              {selectedIndex === 1 && (
+                <motion.div
+                  key="nfts"
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -20 }}
+                  transition={{ duration: 0.3, ease: "easeOut" }}
+                  className="h-full"
+                >
+                  <CommunityNFTs
+                    membersList={membersList}
+                    myNftData={myNftData}
+                    getImageData={getImageData}
+                    wgtParameters={widgetApi.widgetParameters}
+                    refreshOffers={refreshOffers}
+                    widgetApi={widgetApi}
+                    loadCollectionNFTs={handleLoadCollectionNFTs}
+                    loadingCollections={loadingCollections}
+                  />
+                </motion.div>
+              )}
+              {selectedIndex === 2 && (
+                <motion.div
+                  key="offers"
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -20 }}
+                  transition={{ duration: 0.3, ease: "easeOut" }}
+                  className="h-full"
+                >
+                  <Offers
+                    myWalletAddress={myOwnWalletAddress}
+                    myDisplayName={widgetApi.widgetParameters.displayName}
+                    membersList={membersList}
+                    myNftData={myNftData}
+                    widgetApi={widgetApi}
+                    isRefreshing={isRefreshing}
+                    updateUsersNFTs={updateUsersNFTs}
+                    incomingOffer={incomingOffer}
+                    cancelledOffer={cancelledOffer}
+                  />
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        </div>
+      )}
+
+      {/* Image Cache Debug Panel */}
+      <ImageCacheDebugPanel visible={showCacheDebug} />
+    </div>
   );
 };
 

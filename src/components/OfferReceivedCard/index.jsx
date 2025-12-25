@@ -5,7 +5,6 @@ import NFTMessageBox from "../NFTMessageBox";
 import LoadingOverlayForCard from "../LoadingOverlayForCard";
 import { Check, X } from "lucide-react";
 import nft_pic from "../../assets/nft.png";
-import { useAuthProvider } from "../../context/AuthProviderContext";
 
 const OfferReceivedCard = ({
   sellOffers,
@@ -31,7 +30,6 @@ const OfferReceivedCard = ({
   const [roomMessage, setRommMessage] = useState("");
   const [sendRoomMsg, setSendRoomMsg] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const authProvider = useAuthProvider();
 
   const wsRef = useRef(null);
   const wsAcceptIncomingSellOfferUrlRef = useRef(null);
@@ -59,24 +57,6 @@ const OfferReceivedCard = ({
       setMessageBoxText(toastText);
       setIsMessageBoxVisible(true);
     }
-  };
-
-  const openSigningFlow = (statusText, refs, websocketSetter = setWebsocketUrl) => {
-    if (authProvider === "walletconnect") {
-      setTransactionStatus(statusText || "Connect your wallet to sign.");
-      setIsQrModalVisible(true);
-      return;
-    }
-
-    if (refs) {
-      setQrCodeUrl(refs.qr_png);
-      websocketSetter(refs.websocket_status);
-      setIsQrModalVisible(true);
-    }
-  };
-
-  const handleWalletConnectSignIn = () => {
-    setTransactionStatus("Waiting for signature in your wallet…");
   };
 
   useEffect(() => {
@@ -147,11 +127,9 @@ const OfferReceivedCard = ({
           }
 
           console.log(data.refs, "data refs");
-          openSigningFlow(
-            "Connect via WalletConnect to accept this sell offer.",
-            data.refs,
-            setWebsocketAcceptIncomingSellOfferUrl
-          );
+          setQrCodeUrl(data.refs.qr_png);
+          setWebsocketAcceptIncomingSellOfferUrl(data.refs.websocket_status);
+          setIsQrModalVisible(true);
         }
       } catch (error) {
         console.error("Error during fetch:", error);
@@ -311,11 +289,9 @@ const OfferReceivedCard = ({
             }
 
             console.log(data.refs, "data refs");
-            openSigningFlow(
-              "Connect via WalletConnect to create this sell offer.",
-              data.refs,
-              setWebsocketAutoMakeSellOfferUrl
-            );
+            setQrCodeUrl(data.refs.qr_png);
+            setIsQrModalVisible(true);
+            setWebsocketAutoMakeSellOfferUrl(data.refs.websocket_status);
           }
         } catch (error) {
           console.error("Error creating offer:", error);
@@ -398,11 +374,9 @@ const OfferReceivedCard = ({
           }
 
           console.log(data.refs, "data refs");
-          openSigningFlow(
-            "Connect via WalletConnect to cancel this sell offer.",
-            data.refs,
-            setWebsocketUrl
-          );
+          setQrCodeUrl(data.refs.qr_png);
+          setWebsocketUrl(data.refs.websocket_status);
+          setIsQrModalVisible(true);
         }
       }
     } catch (error) {
@@ -518,7 +492,6 @@ const OfferReceivedCard = ({
   }
 
   useEffect(() => {
-    if (authProvider === "walletconnect") return;
     if (!websocketAcceptIncomingSellOfferUrl) return;
     console.log("Setting up WebSocket connection to:", websocketAcceptIncomingSellOfferUrl);
 
@@ -590,10 +563,9 @@ const OfferReceivedCard = ({
       // try { ws.close(); } catch { }
       wsAcceptIncomingSellOfferUrlRef.current = null;
     };
-  }, [websocketAcceptIncomingSellOfferUrl, authProvider]);
+  }, [websocketAcceptIncomingSellOfferUrl]);
 
   useEffect(() => {
-    if (authProvider === "walletconnect") return;
     if (!websocketUrl) return;
 
     console.log("Setting up WebSocket connection to:", websocketUrl);
@@ -666,10 +638,9 @@ const OfferReceivedCard = ({
       // try { ws.close(); } catch { }
       wsRef.current = null;
     };
-  }, [websocketUrl, authProvider]);
+  }, [websocketUrl]);
 
   useEffect(() => {
-    if (authProvider === "walletconnect") return;
     if (!websocketAutoMakeSellOfferUrl) return;
 
     console.log("Setting up WebSocket connection to:", websocketAutoMakeSellOfferUrl);
@@ -740,7 +711,7 @@ const OfferReceivedCard = ({
       // try { ws.close(); } catch { }
       wsAutoMakeSellOfferUrlRef.current = null;
     };
-  }, [websocketAutoMakeSellOfferUrl, authProvider]);
+  }, [websocketAutoMakeSellOfferUrl]);
 
   function handleCloseMessageBox() {
     setIsMessageBoxVisible(false);
@@ -813,7 +784,6 @@ const OfferReceivedCard = ({
             onClose={() => setIsQrModalVisible(false)}
             qrCodeUrl={qrCodeUrl}
             transactionStatus={transactionStatus}
-            onWalletConnectSignIn={handleWalletConnectSignIn}
           />
           <NFTMessageBox
             isOpen={isMessageBoxVisible}

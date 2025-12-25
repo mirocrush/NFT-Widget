@@ -23,7 +23,6 @@ import API_URLS from "../../config";
 import TransactionModal from "../TransactionModal";
 import NFTMessageBox from "../NFTMessageBox";
 import LoadingOverlayForCard from "../LoadingOverlayForCard";
-import { useAuthProvider } from "../../context/AuthProviderContext";
 
 const decodeCurrency = (currency) => {
   try {
@@ -84,25 +83,6 @@ const ParticipantCard = ({
   const [isLoading, setIsLoading] = useState(false);
   const [roomMessage, setRoomMessage] = useState("");
   const [sendRoomMsg, setSendRoomMsg] = useState(false);
-  const authProvider = useAuthProvider();
-
-  const openSigningFlow = (statusText, refs) => {
-    if (authProvider === "walletconnect") {
-      setTransactionStatus(statusText || "Connect your wallet to sign.");
-      setIsQrModalVisible(true);
-      return;
-    }
-
-    if (refs) {
-      setQrCodeUrl(refs.qr_png);
-      setWebsocketUrl(refs.websocket_status);
-      setIsQrModalVisible(true);
-    }
-  };
-
-  const handleWalletConnectSignIn = () => {
-    setTransactionStatus("Waiting for signature in your wallet…");
-  };
 
   useEffect(() => {
     if (sendRoomMsg && roomMessage !== "") {
@@ -320,10 +300,9 @@ const ParticipantCard = ({
             console.log("msg-->", msg);
             setRoomMessage(msg);
 
-            openSigningFlow(
-              "Connect via WalletConnect to sign this sell offer.",
-              response.data.refs
-            );
+            setQrCodeUrl(response.data.refs.qr_png);
+            setWebsocketUrl(response.data.refs.websocket_status);
+            setIsQrModalVisible(true);
             setSell(false);
           } else {
             console.log("No data received from the server.");
@@ -393,10 +372,9 @@ const ParticipantCard = ({
             console.log("msg-->", msg);
             setRoomMessage(msg);
 
-            openSigningFlow(
-              "Connect via WalletConnect to sign this buy offer.",
-              data.refs
-            );
+            setQrCodeUrl(data.refs.qr_png);
+            setWebsocketUrl(data.refs.websocket_status);
+            setIsQrModalVisible(true);
           } else {
             console.log("No data received from the server.");
             setMessageBoxType("error");
@@ -450,10 +428,9 @@ const ParticipantCard = ({
         console.log("msg-->", msg);
         setRoomMessage(msg);
 
-        openSigningFlow(
-          "Connect via WalletConnect to sign this transfer.",
-          response.data.refs
-        );
+        setQrCodeUrl(response.data.refs.qr_png);
+        setWebsocketUrl(response.data.refs.websocket_status);
+        setIsQrModalVisible(true);
         setTransfer(false);
         console.log("Transfer initiated:", response.data);
       } catch (error) {
@@ -463,7 +440,6 @@ const ParticipantCard = ({
   };
 
   useEffect(() => {
-    if (authProvider === "walletconnect") return;
     if (websocketUrl) {
       console.log("websocketUrl in user card", websocketUrl);
       const ws = new WebSocket(websocketUrl);
@@ -525,7 +501,7 @@ const ParticipantCard = ({
         ws.close();
       };
     }
-  }, [websocketUrl, authProvider]);
+  }, [websocketUrl]);
 
   const collections = [
     ...new Set(myNftData.groupedNfts.map((group) => group.collection)),
@@ -1017,7 +993,6 @@ const ParticipantCard = ({
             onClose={() => setIsQrModalVisible(false)}
             qrCodeUrl={qrCodeUrl}
             transactionStatus={transactionStatus}
-            onWalletConnectSignIn={handleWalletConnectSignIn}
           />
           <NFTMessageBox
             isOpen={isMessageBoxVisible}
