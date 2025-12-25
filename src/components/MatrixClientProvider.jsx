@@ -406,6 +406,10 @@ const MatrixClientProvider = () => {
         const events = await widgetApi.receiveStateEvents(STATE_EVENT_ROOM_MEMBER);
         console.log("widgetApi => ", widgetApi)
         console.log("widgetApi.widgetParameters => ", widgetApi.widgetParameters)
+        
+        const urlParams = new URLSearchParams(window.location.search);
+        const authProvider = urlParams.get('authProvider'); // "xumm"
+        console.log("authProvider : ", authProvider);
         console.log("events : ", events);
         const usersList = events
           .filter((item) => {
