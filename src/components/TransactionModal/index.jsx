@@ -1,13 +1,29 @@
 import React, { useState } from "react";
 import { Modal } from "@mui/material";
 import { CheckCircle, XCircle, Loader2, QrCode } from "lucide-react";
+import { useAuthProvider } from "../../context/AuthProviderContext";
+import WalletConnectTransactionModal from "../WalletConnectTransactionModal";
 
 const TransactionModal = ({
   isOpen,
   onClose,
   qrCodeUrl,
   transactionStatus,
+  onWalletConnectSignIn,
 }) => {
+  const authProvider = useAuthProvider();
+
+  if (authProvider === "walletconnect") {
+    return (
+      <WalletConnectTransactionModal
+        isOpen={isOpen}
+        onClose={onClose}
+        onSignIn={onWalletConnectSignIn}
+        status={transactionStatus}
+      />
+    );
+  }
+
   const getStatusIcon = () => {
     if (transactionStatus.toLowerCase().includes("signed")) {
       return <CheckCircle className="text-green-500 w-5 h-5" />;

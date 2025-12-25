@@ -21,6 +21,7 @@ import NFTMessageBox from "../NFTMessageBox";
 import LoadingOverlayForCard from "../LoadingOverlayForCard";
 import { useCachedImage } from "../../hooks/useCachedImage";
 import nft_pic from "../../assets/nft.png";
+import { useAuthProvider } from "../../context/AuthProviderContext";
 
 // Reusable dark-mode styles for MUI outlined inputs (Select/TextField)
 const darkFieldSx = {
@@ -93,6 +94,7 @@ const NFTModal = ({
   const [isMessageBoxVisible, setIsMessageBoxVisible] = useState(false);
   const [messageBoxType, setMessageBoxType] = useState("success");
   const [messageBoxText, setMessageBoxText] = useState("");
+  const authProvider = useAuthProvider();
 
   const wsRef = useRef(null);
 
@@ -124,6 +126,7 @@ const NFTModal = ({
   const description = useMemo(() => descFromMeta(nft?.metadata), [nft]);
 
   useEffect(() => {
+    if (authProvider === "walletconnect") return;
     if (!websocketUrl) return;
 
     // Close any previous socket
@@ -192,7 +195,7 @@ const NFTModal = ({
       try { ws.close(); } catch { }
       wsRef.current = null;
     };
-  }, [websocketUrl, isQrModalVisible, onAction]);
+  }, [websocketUrl, isQrModalVisible, onAction, authProvider]);
 
 
   const getMxidLocalPart = (mxid) =>
@@ -233,6 +236,12 @@ const NFTModal = ({
         setIsMessageBoxVisible(true);
         return;
       }
+      if (authProvider === "walletconnect") {
+        setTransactionStatus("Connect via WalletConnect to sign this transfer.");
+        setIsQrModalVisible(true);
+        return;
+      }
+
       if (data?.refs) {
         setQrCodeUrl(data.refs.qr_png);
         setWebsocketUrl(data.refs.websocket_status);
@@ -296,6 +305,12 @@ const NFTModal = ({
         setIsMessageBoxVisible(true);
         return;
       }
+      if (authProvider === "walletconnect") {
+        setTransactionStatus("Connect via WalletConnect to sign this sell offer.");
+        setIsQrModalVisible(true);
+        return;
+      }
+
       if (data?.refs) {
         setQrCodeUrl(data.refs.qr_png);
         setWebsocketUrl(data.refs.websocket_status);
@@ -348,6 +363,12 @@ const NFTModal = ({
         setIsMessageBoxVisible(true);
         return;
       }
+      if (authProvider === "walletconnect") {
+        setTransactionStatus("Connect via WalletConnect to sign this buy offer.");
+        setIsQrModalVisible(true);
+        return;
+      }
+
       if (data?.refs) {
         setQrCodeUrl(data.refs.qr_png);
         setWebsocketUrl(data.refs.websocket_status);
@@ -372,6 +393,10 @@ const NFTModal = ({
   const handleClose = () => {
     resetForm();
     onClose?.();
+  };
+
+  const startWalletConnectSigning = () => {
+    setTransactionStatus("Waiting for signature in your wallet…");
   };
 
   if (!nft) return null;
@@ -787,6 +812,7 @@ const NFTModal = ({
         onClose={() => closeQrModal("Cancelled", "Transaction flow cancelled.", "info")}
         qrCodeUrl={qrCodeUrl}
         transactionStatus={transactionStatus}
+        onWalletConnectSignIn={startWalletConnectSigning}
       />
 
 

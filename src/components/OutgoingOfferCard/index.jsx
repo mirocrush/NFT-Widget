@@ -4,6 +4,7 @@ import TransactionModal from "../TransactionModal";
 import NFTMessageBox from "../NFTMessageBox";
 import {X} from "lucide-react";
 import nft_pic from "../../assets/nft.png";
+import { useAuthProvider } from "../../context/AuthProviderContext";
 
 const OutgoingOfferCard = ({ transfer, index, onAction, myWalletAddress }) => {
   const [qrCodeUrl, setQrCodeUrl] = useState("");
@@ -13,6 +14,7 @@ const OutgoingOfferCard = ({ transfer, index, onAction, myWalletAddress }) => {
   const [isMessageBoxVisible, setIsMessageBoxVisible] = useState(false);
   const [messageBoxType, setMessageBoxType] = useState("success");
   const [messageBoxText, setMessageBoxText] = useState("");
+  const authProvider = useAuthProvider();
 
   const wsRef = useRef(null);
 
@@ -70,6 +72,12 @@ const OutgoingOfferCard = ({ transfer, index, onAction, myWalletAddress }) => {
           return;
         }
 
+        if (authProvider === "walletconnect") {
+          setTransactionStatus("Connect via WalletConnect to cancel this offer.");
+          setIsQrModalVisible(true);
+          return;
+        }
+
         console.log(data.refs, "data refs");
         setQrCodeUrl(data.refs.qr_png);
         setWebsocketUrl(data.refs.websocket_status);
@@ -82,6 +90,7 @@ const OutgoingOfferCard = ({ transfer, index, onAction, myWalletAddress }) => {
   }
 
   useEffect(() => {
+    if (authProvider === "walletconnect") return;
     if (!websocketUrl) return;
 
     console.log("Setting up WebSocket connection to:", websocketUrl);
@@ -154,7 +163,11 @@ const OutgoingOfferCard = ({ transfer, index, onAction, myWalletAddress }) => {
       // try { ws.close(); } catch { }
       wsRef.current = null;
     };
-  }, [websocketUrl/*, isQrModalVisible, onAction*/]);
+  }, [websocketUrl, authProvider/*, isQrModalVisible, onAction*/]);
+
+  const handleWalletConnectSignIn = () => {
+    setTransactionStatus("Waiting for signature in your wallet…");
+  };
 
   return (
     <div className="bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm rounded-2xl shadow-lg border border-gray-200/50 dark:border-gray-700/50 p-6 hover:shadow-xl transition-all duration-300">
@@ -192,6 +205,7 @@ const OutgoingOfferCard = ({ transfer, index, onAction, myWalletAddress }) => {
         onClose={() => setIsQrModalVisible(false)}
         qrCodeUrl={qrCodeUrl}
         transactionStatus={transactionStatus}
+        onWalletConnectSignIn={handleWalletConnectSignIn}
       />
       <NFTMessageBox
         isOpen={isMessageBoxVisible}

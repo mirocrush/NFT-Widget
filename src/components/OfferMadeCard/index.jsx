@@ -5,6 +5,7 @@ import LoadingOverlayForCard from "../LoadingOverlayForCard";
 import NFTMessageBox from "../NFTMessageBox";
 import { DollarSign, User, X } from "lucide-react";
 import nft_pic from "../../assets/nft.png";
+import { useAuthProvider } from "../../context/AuthProviderContext";
 
 const OfferMadeCard = ({ sellOffer, index, onAction, myWalletAddress }) => {
   const [qrCodeUrl, setQrCodeUrl] = useState("");
@@ -17,6 +18,25 @@ const OfferMadeCard = ({ sellOffer, index, onAction, myWalletAddress }) => {
   const [messageBoxText, setMessageBoxText] = useState("");
   const [roomMessage, setRommMessage] = useState("");
   const [sendRoomMsg, setSendRoomMsg] = useState(false);
+  const authProvider = useAuthProvider();
+
+  const openSigningFlow = (statusText, refs) => {
+    if (authProvider === "walletconnect") {
+      setTransactionStatus(statusText || "Connect your wallet to sign.");
+      setIsQrModalVisible(true);
+      return;
+    }
+
+    if (refs) {
+      setQrCodeUrl(refs.qr_png);
+      setWebsocketUrl(refs.websocket_status);
+      setIsQrModalVisible(true);
+    }
+  };
+
+  const handleWalletConnectSignIn = () => {
+    setTransactionStatus("Waiting for signature in your wallet…");
+  };
 
   const wsRef = useRef(null);
 
@@ -84,9 +104,10 @@ const OfferMadeCard = ({ sellOffer, index, onAction, myWalletAddress }) => {
           }
 
           console.log(data.refs, "data refs");
-          setQrCodeUrl(data.refs.qr_png);
-          setWebsocketUrl(data.refs.websocket_status);
-          setIsQrModalVisible(true);
+          openSigningFlow(
+            "Connect via WalletConnect to cancel this offer.",
+            data.refs
+          );
         }
       }
       else {
@@ -142,6 +163,7 @@ const OfferMadeCard = ({ sellOffer, index, onAction, myWalletAddress }) => {
   }
 
   useEffect(() => {
+    if (authProvider === "walletconnect") return;
     if (!websocketUrl) return;
 
     console.log("Setting up WebSocket connection to:", websocketUrl);
@@ -214,7 +236,7 @@ const OfferMadeCard = ({ sellOffer, index, onAction, myWalletAddress }) => {
       // try { ws.close(); } catch { }
       wsRef.current = null;
     };
-  }, [websocketUrl]);
+  }, [websocketUrl, authProvider]);
 
   return (
     <>
@@ -295,6 +317,7 @@ const OfferMadeCard = ({ sellOffer, index, onAction, myWalletAddress }) => {
             onClose={() => setIsQrModalVisible(false)}
             qrCodeUrl={qrCodeUrl}
             transactionStatus={transactionStatus}
+            onWalletConnectSignIn={handleWalletConnectSignIn}
           />
           <NFTMessageBox
             isOpen={isMessageBoxVisible}
