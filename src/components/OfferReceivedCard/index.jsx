@@ -1,9 +1,10 @@
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState } from "react";
 import API_URLS from "../../config";
 import TransactionModal from "../TransactionModal";
 import NFTMessageBox from "../NFTMessageBox";
 import LoadingOverlayForCard from "../LoadingOverlayForCard";
 import { Check, X } from "lucide-react";
+import { useTransactionHandler } from "../../hooks/useTransactionHandler";
 import nft_pic from "../../assets/nft.png";
 
 const OfferReceivedCard = ({
@@ -17,47 +18,31 @@ const OfferReceivedCard = ({
   updateUsersNFTs,
   widgetApi,
 }) => {
-  const [qrCodeUrl, setQrCodeUrl] = useState("");
-  const [websocketUrl, setWebsocketUrl] = useState("");
-  const [websocketAutoMakeSellOfferUrl, setWebsocketAutoMakeSellOfferUrl] = useState("");
-  const [websocketAcceptIncomingSellOfferUrl, setWebsocketAcceptIncomingSellOfferUrl] = useState("");
-  const [transactionStatus, setTransactionStatus] = useState("");
-  const [isQrModalVisible, setIsQrModalVisible] = useState(false);
   const [madeOffers, setMadeOffers] = useState([]);
-  const [isMessageBoxVisible, setIsMessageBoxVisible] = useState(false);
-  const [messageBoxType, setMessageBoxType] = useState("success");
-  const [messageBoxText, setMessageBoxText] = useState("");
   const [roomMessage, setRommMessage] = useState("");
   const [sendRoomMsg, setSendRoomMsg] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
 
-  const wsRef = useRef(null);
-  const wsAcceptIncomingSellOfferUrlRef = useRef(null);
-  const wsAutoMakeSellOfferUrlRef = useRef(null);
-
-  const safeParse = (v) => {
-    try { return JSON.parse(v); } catch { return v; }
-  };
-
-  const closeQrModal = (statusText, toastText, toastType = "error") => {
-    console.log('closeQRModal', { statusText, toastText, toastType });
-    setTransactionStatus(statusText || "");
-    setIsQrModalVisible(false);
-    try { wsRef.current?.close(); } catch { }
-    wsRef.current = null;
-
-    try { wsAcceptIncomingSellOfferUrlRef.current?.close(); } catch { }
-    wsAcceptIncomingSellOfferUrlRef.current = null;
-
-    try { wsAutoMakeSellOfferUrlRef.current?.close(); } catch { }
-    wsAutoMakeSellOfferUrlRef.current = null;
-
-    if (toastText) {
-      setMessageBoxType(toastType);
-      setMessageBoxText(toastText);
-      setIsMessageBoxVisible(true);
-    }
-  };
+  // Use transaction handler hook
+  const {
+    isLoading,
+    isQrModalVisible,
+    qrCodeUrl,
+    transactionStatus,
+    isMessageBoxVisible,
+    messageBoxType,
+    messageBoxText,
+    setIsLoading,
+    setIsMessageBoxVisible,
+    executeTransaction,
+    showMessage,
+    closeQrModal,
+  } = useTransactionHandler({
+    myWalletAddress,
+    onTransactionComplete: () => {
+      setSendRoomMsg(true);
+      onAction?.();
+    },
+  });
 
   useEffect(() => {
     console.log(
@@ -83,87 +68,49 @@ const OfferReceivedCard = ({
     console.log("Accept clicked for item:", buyOffer);
     console.log("SellOffer--->", madeOffers);
 
+    // Path 1: Accept incoming sell offer (requires QR)
     if (buyOffer.offer.isSell === true) {
-      setIsLoading(true);
-
       const requestBody = {
         address: myWalletAddress,
         OfferId: buyOffer.offer.offerId,
         buyOrSell: 0,
       };
-      try {
-        const response = await fetch(`${API_URLS.backendUrl}/accept-offer`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(requestBody),
-        });
-        console.log(requestBody, "requestBody");
+      console.log(requestBody, "requestBody");
 
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
+      await executeTransaction({
+        endpoint: "/accept-offer",
+        payload: requestBody,
+        offerType: "accept_sell_offer",
+        successMessage: "Sell offer accepted successfully!",
+        errorMessage: "Error accepting sell offer. Please try again.",
+        insufficientCreditMessage: "You don't have enough mCredits to accept this offer.\nPlease buy more mCredits.",
+      });
+      return;
+    }
 
-        // const msg = `🔔NFT Accept Transfer Offer Created\n${myDisplayName} accepted transfer offer from ${transfer.offer.offerOwnerName} for ${transfer.nft.metadata.name}`;
-        // console.log("msg-->", msg);
-        // setRommMessage(msg);
-        // setSendRoomMsg(false);
-
-        const data = await response.json();
-
-        console.log(data, "response data");
-
-        setIsLoading(false);
-
-        if (data) {
-          if (data?.result === "NotEnoughCredit") {
-            setMessageBoxType("error");
-            setMessageBoxText(
-              "You don't have enough mCredits to create this offer.\nPlease buy more mCredits."
-            );
-            setIsMessageBoxVisible(true);
-            return;
-          }
-
-          console.log(data.refs, "data refs");
-          setQrCodeUrl(data.refs.qr_png);
-          setWebsocketAcceptIncomingSellOfferUrl(data.refs.websocket_status);
-          setIsQrModalVisible(true);
-        }
-      } catch (error) {
-        console.error("Error during fetch:", error);
-      }
-
-
-    } else {
+    // Path 2 & 3: Accept buy offer (either with existing sell offer or create new one)
+    else {
       setIsLoading(true);
-      setTransactionStatus("");
 
       let isOfferFound = false;
       let sellOfferIndex = "";
-      let brokerFee = (((buyOffer.offer.amount * 1 - 12) / 1.01) * 0.01).toFixed(
-        0
-      );
+      let brokerFee = (((buyOffer.offer.amount * 1 - 12) / 1.01) * 0.01).toFixed(0);
       let sellOfferOwner = "";
+
+      // Check if matching sell offer exists
       for (const offer of madeOffers) {
         console.log("offer--->", offer);
         if (offer.nft.nftokenID === buyOffer.nft.nftokenID) {
           isOfferFound = true;
           sellOfferIndex = offer.offer.offerId;
-          brokerFee = (((buyOffer.offer.amount * 1 - 12) / 1.01) * 0.01).toFixed(
-            0
-          );
+          brokerFee = (((buyOffer.offer.amount * 1 - 12) / 1.01) * 0.01).toFixed(0);
           sellOfferOwner = offer.offer.offerOwner;
-          console.log(
-            "brokerFee--->",
-            brokerFee,
-            buyOffer.offer.amount,
-            offer.offer.amount
-          );
+          console.log("brokerFee--->", brokerFee, buyOffer.offer.amount, offer.offer.amount);
           break;
         }
       }
+
+      // Path 2: Matching sell offer found - use broker (direct success check, no QR)
       if (isOfferFound) {
         const requestBody = {
           owner: myWalletAddress,
@@ -177,10 +124,7 @@ const OfferReceivedCard = ({
         let strAmount = "";
         let strCurrency = "";
         if (typeof buyOffer.offer.amount === "string") {
-          strAmount = (
-            (buyOffer.offer.amount * 1 - 12) /
-            1000000
-          ).toString();
+          strAmount = ((buyOffer.offer.amount * 1 - 12) / 1000000).toString();
           strCurrency = "XRP";
         } else {
           strAmount = buyOffer.offer.amount.amount;
@@ -190,67 +134,45 @@ const OfferReceivedCard = ({
         const msg = `🔔NFT Accept Offer Created\n${buyOffer.offer.offerOwnerName} purchased ${buyOffer.nft.metadata.name} from ${myDisplayName} for ${strAmount} ${strCurrency}`;
         console.log("msg-->", msg);
         setRommMessage(msg);
+        setSendRoomMsg(false);
 
         try {
-          const response = await fetch(
-            `${API_URLS.backendUrl}/broker-accept-offer`,
-            {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify(requestBody),
-            }
-          );
-          console.log(requestBody, "requestBody");
+          const response = await fetch(`${API_URLS.backendUrl}/broker-accept-offer`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(requestBody),
+          });
 
           if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
           }
 
-          console.log("response", response);
-
           const data = await response.json();
           setIsLoading(false);
-          setSendRoomMsg(false);
-          if (data) {
-            console.log(data, "data");
 
-            if (data?.result === "NotEnoughCredit") {
-              setMessageBoxType("error");
-              setMessageBoxText(
-                "You don't have enough mCredits to create this offer.\nPlease buy more mCredits."
-              );
-              setIsMessageBoxVisible(true);
-              return;
-            }
+          if (data?.result === "NotEnoughCredit") {
+            showMessage("error", "You don't have enough mCredits to accept this offer.\nPlease buy more mCredits.");
+            return;
+          }
 
-            if (data.result.meta.TransactionResult === "tesSUCCESS") {
-              setMessageBoxType("success");
-              setMessageBoxText("Offer finished successfully");
-              setSendRoomMsg(true);
-              // onAction();
-              updateUsersNFTs(
-                buyOffer.nft.nftokenID,
-                sellOfferOwner,
-                buyOffer.offer.offerOwner
-              );
-            } else {
-              setMessageBoxType("error");
-              setMessageBoxText(data.result.meta.TransactionResult);
-            }
-            setIsMessageBoxVisible(true);
+          if (data.result?.meta?.TransactionResult === "tesSUCCESS") {
+            showMessage("success", "Offer finished successfully");
+            setSendRoomMsg(true);
+            updateUsersNFTs(buyOffer.nft.nftokenID, sellOfferOwner, buyOffer.offer.offerOwner);
+            onAction?.();
+          } else {
+            showMessage("error", data.result?.meta?.TransactionResult || "Transaction failed");
           }
         } catch (error) {
+          setIsLoading(false);
           console.error("Error during fetch:", error);
+          showMessage("error", "Error accepting offer. Please try again.");
         }
-      } else {
-        console.log("No matching offer found for the selected NFT.");
-        let sellAmount = "0";
-        sellAmount = (
-          (buyOffer.offer.amount * 1 - 12) /
-          1000000
-        ).toString();
+      }
+      // Path 3: No matching sell offer - auto-create one first (requires QR)
+      else {
+        console.log("No matching offer found - auto-creating sell offer");
+        let sellAmount = ((buyOffer.offer.amount * 1 - 12) / 1000000).toString();
 
         const payload = {
           nft: buyOffer.nft.nftokenID,
@@ -259,102 +181,42 @@ const OfferReceivedCard = ({
           sender: myWalletAddress,
         };
         console.log("payload for sell", payload);
-        try {
-          const response = await fetch(
-            `${API_URLS.backendUrl}/create-nft-offer`,
-            {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify(payload),
-            }
-          );
 
-          if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-          }
+        // This will trigger QR flow, then onTransactionComplete will handle the broker acceptance
+        await executeTransaction({
+          endpoint: "/create-nft-offer",
+          payload,
+          offerType: "auto_create_sell_offer",
+          successMessage: "Sell offer created. Now accepting buy offer...",
+          errorMessage: "Error creating sell offer. Please try again.",
+          insufficientCreditMessage: "You don't have enough mCredits to create this offer.\nPlease buy more mCredits.",
+        });
 
-          setIsLoading(false);
-          const data = await response.json();
-          console.log("Offer created:", response);
-          if (data) {
-            if (data?.result === "NotEnoughCredit") {
-              setMessageBoxType("error");
-              setMessageBoxText(
-                "You don't have enough mCredits to create this offer.\nPlease buy more mCredits."
-              );
-              setIsMessageBoxVisible(true);
-              return;
-            }
-
-            console.log(data.refs, "data refs");
-            setQrCodeUrl(data.refs.qr_png);
-            setIsQrModalVisible(true);
-            setWebsocketAutoMakeSellOfferUrl(data.refs.websocket_status);
-          }
-        } catch (error) {
-          console.error("Error creating offer:", error);
-        }
+        // After successful QR completion, need to call broker-accept-offer
+        // This will be handled by refreshSellOfferAndAccept which is triggered elsewhere
       }
     }
   }
 
   async function onCancelOffer() {
     console.log("Cancel clicked for item:", buyOffer);
-    setTransactionStatus("");
-    setIsLoading(true);
 
+    // Path 1: Received buy offer - direct cancel (no QR)
+    if (buyOffer?.offer?.isSell !== true) {
+      setIsLoading(true);
 
-    try {
-      if (buyOffer?.offer?.isSell !== true) { //Received Buy Offer
-        const requestBody = {
-          owner: myWalletAddress,
-          // account: buyOffer.offer.offerOwner,
-          offerId: buyOffer.offer.offerId,
-        };
+      const requestBody = {
+        owner: myWalletAddress,
+        offerId: buyOffer.offer.offerId,
+      };
+      console.log(requestBody, "requestBody");
+
+      try {
         const response = await fetch(`${API_URLS.backendUrl}/cancel-nft-offer`, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify(requestBody),
         });
-        console.log(requestBody, "requestBody");
-
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-
-        const data = await response.json();
-        setIsLoading(false);
-        if (data) {
-          if (data?.result === "NotEnoughCredit") {
-            setMessageBoxType("error");
-            setMessageBoxText(
-              "You don't have enough mCredits to create this offer.\nPlease buy more mCredits."
-            );
-            setIsMessageBoxVisible(true);
-            return;
-          }
-
-          console.log(data.refs, "data refs");
-          // onAction();
-        }
-      } else {  //Received Sell Offer
-        const requestBody = {
-          owner: myWalletAddress,
-          account: buyOffer.offer.offerOwner,
-          offerId: buyOffer.offer.offerId,
-        };
-        const response = await fetch(`${API_URLS.backendUrl}/cancel-nft-offer-with-sign`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(requestBody),
-        });
-        console.log(requestBody, "requestBody");
 
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
@@ -363,24 +225,36 @@ const OfferReceivedCard = ({
         const data = await response.json();
         setIsLoading(false);
 
-        if (data) {
-          if (data?.result === "NotEnoughCredit") {
-            setMessageBoxType("error");
-            setMessageBoxText(
-              "You don't have enough mCredits to create this offer.\nPlease buy more mCredits."
-            );
-            setIsMessageBoxVisible(true);
-            return;
-          }
-
-          console.log(data.refs, "data refs");
-          setQrCodeUrl(data.refs.qr_png);
-          setWebsocketUrl(data.refs.websocket_status);
-          setIsQrModalVisible(true);
+        if (data?.result === "NotEnoughCredit") {
+          showMessage("error", "You don't have enough mCredits to cancel this offer.\nPlease buy more mCredits.");
+          return;
         }
+
+        showMessage("success", "Offer cancelled successfully");
+        onAction?.();
+      } catch (error) {
+        setIsLoading(false);
+        console.error("Error during fetch:", error);
+        showMessage("error", "Error cancelling offer. Please try again.");
       }
-    } catch (error) {
-      console.error("Error during fetch:", error);
+    }
+    // Path 2: Received sell offer - cancel with signature (requires QR)
+    else {
+      const requestBody = {
+        owner: myWalletAddress,
+        account: buyOffer.offer.offerOwner,
+        offerId: buyOffer.offer.offerId,
+      };
+      console.log(requestBody, "requestBody");
+
+      await executeTransaction({
+        endpoint: "/cancel-nft-offer-with-sign",
+        payload: requestBody,
+        offerType: "cancel_sell_offer",
+        successMessage: "Offer cancelled successfully!",
+        errorMessage: "Error cancelling offer. Please try again.",
+        insufficientCreditMessage: "You don't have enough mCredits to cancel this offer.\nPlease buy more mCredits.",
+      });
     }
   }
 
@@ -392,18 +266,18 @@ const OfferReceivedCard = ({
     let sellOfferIndex = "";
     let brokerFee = (parseFloat(buyOffer.amount) * 1.01).toString();
     let sellOfferOwner = "";
+
     for (const offer of refreshedSellOffers) {
       console.log("offer--->", offer);
       if (offer.NFTokenID === buyOffer.nft.nftokenID) {
         isOfferFound = true;
         sellOfferIndex = offer.nft_offer_index;
         sellOfferOwner = offer.owner;
-        brokerFee = (((buyOffer.offer.amount * 1 - 12) / 1.01) * 0.01).toFixed(
-          0
-        );
+        brokerFee = (((buyOffer.offer.amount * 1 - 12) / 1.01) * 0.01).toFixed(0);
         break;
       }
     }
+
     if (isOfferFound) {
       const requestBody = {
         owner: myWalletAddress,
@@ -414,18 +288,26 @@ const OfferReceivedCard = ({
       };
       console.log("requestBody--->", requestBody);
 
+      let strAmount = "";
+      let strCurrency = "";
+      if (typeof buyOffer.offer.amount === "string") {
+        strAmount = ((buyOffer.offer.amount * 1 - 12) / 1000000).toString();
+        strCurrency = "XRP";
+      } else {
+        strAmount = buyOffer.offer.amount.amount;
+        strCurrency = buyOffer.offer.amount.currency;
+      }
+      const msg = `🔔NFT Accept Offer Created\n${buyOffer.offer.offerOwnerName} purchased ${buyOffer.nft.metadata.name} from ${myDisplayName} for ${strAmount} ${strCurrency}`;
+      console.log("msg-->", msg);
+      setRommMessage(msg);
+      setSendRoomMsg(false);
+
       try {
-        const response = await fetch(
-          `${API_URLS.backendUrl}/broker-accept-offer`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify(requestBody),
-          }
-        );
-        console.log(requestBody, "requestBody");
+        const response = await fetch(`${API_URLS.backendUrl}/broker-accept-offer`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(requestBody),
+        });
 
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
@@ -434,51 +316,21 @@ const OfferReceivedCard = ({
         const data = await response.json();
 
         if (data?.result === "NotEnoughCredit") {
-          setMessageBoxType("error");
-          setMessageBoxText(
-            "You don't have enough mCredits to create this offer.\nPlease buy more mCredits."
-          );
-          setIsMessageBoxVisible(true);
+          showMessage("error", "You don't have enough mCredits to accept this offer.\nPlease buy more mCredits.");
           return;
         }
 
-        let strAmount = "";
-        let strCurrency = "";
-        if (typeof buyOffer.offer.amount === "string") {
-          strAmount = (
-            (buyOffer.offer.amount * 1 - 12) /
-            1000000
-          ).toString();
-          strCurrency = "XRP";
+        if (data.result?.meta?.TransactionResult === "tesSUCCESS") {
+          showMessage("success", "Offer finished successfully");
+          setSendRoomMsg(true);
+          updateUsersNFTs(buyOffer.nft.nftokenID, sellOfferOwner, buyOffer.offer.offerOwner);
+          onAction?.();
         } else {
-          strAmount = buyOffer.offer.amount.amount;
-          strCurrency = buyOffer.offer.amount.currency;
-        }
-        const msg = `🔔NFT Accept Offer Created\n${buyOffer.offer.offerOwnerName} purchased ${buyOffer.nft.metadata.name} from ${myDisplayName} for ${strAmount} ${strCurrency}`;
-        console.log("msg-->", msg);
-        setRommMessage(msg);
-
-        if (data) {
-          console.log(data, "data");
-          setSendRoomMsg(false);
-          if (data.result.meta.TransactionResult === "tesSUCCESS") {
-            setMessageBoxType("success");
-            setMessageBoxText("Offer finished successfully");
-            setSendRoomMsg(true);
-            // onAction();
-            updateUsersNFTs(
-              buyOffer.nft.nftokenID,
-              sellOfferOwner,
-              buyOffer.offer.offerOwner
-            );
-          } else {
-            setMessageBoxType("error");
-            setMessageBoxText(data.result.meta.TransactionResult);
-          }
-          setIsMessageBoxVisible(true);
+          showMessage("error", data.result?.meta?.TransactionResult || "Transaction failed");
         }
       } catch (error) {
         console.error("Error during fetch:", error);
+        showMessage("error", "Error accepting offer. Please try again.");
       }
     }
     setIsLoading(false);
@@ -490,228 +342,6 @@ const OfferReceivedCard = ({
     console.log("done refreshSellOffers", refreshedSellOffers);
     onAcceptAutoMakeSellOfferOffer(refreshedSellOffers);
   }
-
-  useEffect(() => {
-    if (!websocketAcceptIncomingSellOfferUrl) return;
-    console.log("Setting up WebSocket connection to:", websocketAcceptIncomingSellOfferUrl);
-
-    // Close any previous socket
-    try { wsAcceptIncomingSellOfferUrlRef.current?.close(); } catch { }
-    const ws = new WebSocket(websocketAcceptIncomingSellOfferUrl);
-    wsAcceptIncomingSellOfferUrlRef.current = ws;
-
-    ws.onmessage = (event) => {
-      const msg = safeParse(event.data || "");
-      console.log("WebSocket message received:", msg);
-
-      // Some gateways send plain strings for simple states
-      if (typeof msg === "string") {
-        if (/declin|reject|cancel|close|abort|deny|expire/i.test(msg)) {
-          closeQrModal("Transaction cancelled", "Transaction was cancelled/declined.");
-        }
-        return;
-      }
-
-      if (msg?.signed === true) {
-        closeQrModal("Transaction signed", "Transaction completed successfully!", "success");
-        const requestBody = {
-          account: myWalletAddress,
-          offerType: "accept_transfer_offer",
-        };
-        console.log("requestBody for mCredit deduction:", requestBody);
-        const response = fetch(`${API_URLS.backendUrl}/deduct-mCredit`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(requestBody),
-        });
-        console.log("deduction result:", response);
-        // onAction?.();
-        return;
-      } else if (msg?.rejected) {
-        const why = (msg?.reason || "Declined").toString().toLowerCase();
-        closeQrModal("Transaction declined", `Transaction was ${why}.`);
-        return;
-      }
-
-      // Extra guards for alternate shapes
-      if (msg?.cancelled || msg?.canceled || msg?.expired) {
-        closeQrModal("Transaction cancelled", /*"Transaction was cancelled/expired."*/);
-        return;
-      }
-    };
-
-    ws.onerror = () => {
-      // Treat errors as a cancelled flow but don't spam
-      console.log("WebSocket error occurred");
-      closeQrModal("Connection error", /*"Wallet connection error. Please try again."*/ "");
-      return;
-    };
-
-    ws.onclose = () => {
-      // If the QR modal is still open with no resolution, close gracefully
-      console.log("WebSocket connection closed");
-      if (isQrModalVisible) {
-        closeQrModal("Connection closed", /*"Wallet connection closed."*/ "");
-        return;
-      }
-    };
-
-    return () => {
-      console.log("Cleaning up WebSocket connection");
-      // try { ws.close(); } catch { }
-      wsAcceptIncomingSellOfferUrlRef.current = null;
-    };
-  }, [websocketAcceptIncomingSellOfferUrl]);
-
-  useEffect(() => {
-    if (!websocketUrl) return;
-
-    console.log("Setting up WebSocket connection to:", websocketUrl);
-
-    // Close any previous socket
-    try { wsRef.current?.close(); } catch { }
-    const ws = new WebSocket(websocketUrl);
-    wsRef.current = ws;
-
-    ws.onmessage = (event) => {
-      const msg = safeParse(event.data || "");
-      console.log("WebSocket message received:", msg);
-
-      // Some gateways send plain strings for simple states
-      if (typeof msg === "string") {
-        if (/declin|reject|cancel|close|abort|deny|expire/i.test(msg)) {
-          closeQrModal("Transaction cancelled", "Transaction was cancelled/declined.");
-        }
-        return;
-      }
-
-      if (msg?.signed === true) {
-        closeQrModal("Transaction signed", "Transaction completed successfully!", "success");
-        const requestBody = {
-          account: myWalletAddress,
-          offerType: "accept_transfer_offer",
-        };
-        console.log("requestBody for mCredit deduction:", requestBody);
-        const response = fetch(`${API_URLS.backendUrl}/deduct-mCredit`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(requestBody),
-        });
-        console.log("deduction result:", response);
-        // onAction?.();
-        return;
-      } else if (msg?.rejected) {
-        const why = (msg?.reason || "Declined").toString().toLowerCase();
-        closeQrModal("Transaction declined", `Transaction was ${why}.`);
-        return;
-      }
-
-      // Extra guards for alternate shapes
-      if (msg?.cancelled || msg?.canceled || msg?.expired) {
-        closeQrModal("Transaction cancelled", /*"Transaction was cancelled/expired."*/);
-        return;
-      }
-    };
-
-    ws.onerror = () => {
-      // Treat errors as a cancelled flow but don't spam
-      console.log("WebSocket error occurred");
-      closeQrModal("Connection error", /*"Wallet connection error. Please try again."*/ "");
-      return;
-    };
-
-    ws.onclose = () => {
-      // If the QR modal is still open with no resolution, close gracefully
-      console.log("WebSocket connection closed");
-      if (isQrModalVisible) {
-        closeQrModal("Connection closed", /*"Wallet connection closed."*/ "");
-        return;
-      }
-    };
-
-    return () => {
-      console.log("Cleaning up WebSocket connection");
-      // try { ws.close(); } catch { }
-      wsRef.current = null;
-    };
-  }, [websocketUrl]);
-
-  useEffect(() => {
-    if (!websocketAutoMakeSellOfferUrl) return;
-
-    console.log("Setting up WebSocket connection to:", websocketAutoMakeSellOfferUrl);
-
-    // Close any previous socket
-    try { wsAutoMakeSellOfferUrlRef.current?.close(); } catch { }
-    const ws = new WebSocket(websocketAutoMakeSellOfferUrl);
-    wsAutoMakeSellOfferUrlRef.current = ws;
-
-    ws.onmessage = (event) => {
-      const msg = safeParse(event.data || "");
-      console.log("WebSocket message received:", msg);
-
-      // Some gateways send plain strings for simple states
-      if (typeof msg === "string") {
-        if (/declin|reject|cancel|close|abort|deny|expire/i.test(msg)) {
-          closeQrModal("Transaction cancelled", "Transaction was cancelled/declined.");
-        }
-        return;
-      }
-      if (msg?.signed === true) {
-        closeQrModal("Transaction signed", "Transaction completed successfully!", "success");
-        const requestBody = {
-          account: myWalletAddress,
-          offerType: "accept_transfer_offer",
-        };
-        const response = fetch(`${API_URLS.backendUrl}/deduct-mCredit`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(requestBody),
-        });
-        console.log("deduction result:", response);
-        refreshSellOfferAndAccept();
-        setIsLoading(true);
-      } else if (msg?.rejected) {
-        const why = (msg?.reason || "Declined").toString().toLowerCase();
-        closeQrModal("Transaction declined", `Transaction was ${why}.`);
-        return;
-      }
-
-      // Extra guards for alternate shapes
-      if (msg?.cancelled || msg?.canceled || msg?.expired) {
-        closeQrModal("Transaction cancelled", /*"Transaction was cancelled/expired."*/);
-        return;
-      }
-    };
-
-    ws.onerror = () => {
-      // Treat errors as a cancelled flow but don't spam
-      console.log("WebSocket error occurred");
-      closeQrModal("Connection error", /*"Wallet connection error. Please try again."*/ "");
-      return;
-    };
-
-    ws.onclose = () => {
-      // If the QR modal is still open with no resolution, close gracefully
-      console.log("WebSocket connection closed");
-      if (isQrModalVisible) {
-        closeQrModal("Connection closed", /*"Wallet connection closed."*/ "");
-        return;
-      }
-    };
-
-    return () => {
-      console.log("Cleaning up WebSocket connection");
-      // try { ws.close(); } catch { }
-      wsAutoMakeSellOfferUrlRef.current = null;
-    };
-  }, [websocketAutoMakeSellOfferUrl]);
 
   function handleCloseMessageBox() {
     setIsMessageBoxVisible(false);

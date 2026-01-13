@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useMemo } from "react";
 import {
   Modal,
   Box,
@@ -15,11 +15,11 @@ import {
   IconButton,
 } from "@mui/material";
 import { User, Package, Tag, X, Send, Gavel, Gift, Copy } from "lucide-react";
-import API_URLS from "../../config";
 import TransactionModal from "../TransactionModal";
 import NFTMessageBox from "../NFTMessageBox";
 import LoadingOverlayForCard from "../LoadingOverlayForCard";
 import { useCachedImage } from "../../hooks/useCachedImage";
+import { useTransactionHandler } from "../../hooks/useTransactionHandler";
 import nft_pic from "../../assets/nft.png";
 
 // Reusable dark-mode styles for MUI outlined inputs (Select/TextField)
@@ -81,36 +81,24 @@ const NFTModal = ({
   const [currency, setCurrency] = useState("XRP");
   const [selectedUser, setSelectedUser] = useState("all");
   const [isListing, setIsListing] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
 
-  // QR / Transaction
-  const [qrCodeUrl, setQrCodeUrl] = useState("");
-  const [websocketUrl, setWebsocketUrl] = useState("");
-  const [transactionStatus, setTransactionStatus] = useState("");
-  const [isQrModalVisible, setIsQrModalVisible] = useState(false);
-  const [createdOfferType, setCreatedOfferType] = useState("create_buy_offer");
-  // Messages
-  const [isMessageBoxVisible, setIsMessageBoxVisible] = useState(false);
-  const [messageBoxType, setMessageBoxType] = useState("success");
-  const [messageBoxText, setMessageBoxText] = useState("");
-
-  const wsRef = useRef(null);
-
-  const safeParse = (v) => {
-    try { return JSON.parse(v); } catch { return v; }
-  };
-
-  const closeQrModal = (statusText, toastText, toastType = "error") => {
-    setTransactionStatus(statusText || "");
-    setIsQrModalVisible(false);
-    try { wsRef.current?.close(); } catch { }
-    wsRef.current = null;
-    if (toastText) {
-      setMessageBoxType(toastType);
-      setMessageBoxText(toastText);
-      setIsMessageBoxVisible(true);
-    }
-  };
+  // Use transaction handler hook
+  const {
+    isLoading,
+    isQrModalVisible,
+    qrCodeUrl,
+    transactionStatus,
+    isMessageBoxVisible,
+    messageBoxType,
+    messageBoxText,
+    setIsMessageBoxVisible,
+    executeTransaction,
+    showMessage,
+    closeQrModal,
+  } = useTransactionHandler({
+    myWalletAddress,
+    onTransactionComplete: onAction,
+  });
 
 
   const availableCurrencies = ["XRP"]; // extend if needed
@@ -123,86 +111,13 @@ const NFTModal = ({
 
   const description = useMemo(() => descFromMeta(nft?.metadata), [nft]);
 
-  useEffect(() => {
-    if (!websocketUrl) return;
-
-    // Close any previous socket
-    try { wsRef.current?.close(); } catch { }
-    const ws = new WebSocket(websocketUrl);
-    wsRef.current = ws;
-
-    ws.onmessage = (event) => {
-      const msg = safeParse(event.data || "");
-      console.log("WebSocket message received:", msg);
-
-      // Some gateways send plain strings for simple states
-      if (typeof msg === "string") {
-        if (/declin|reject|cancel|close|abort|deny|expire/i.test(msg)) {
-          closeQrModal("Transaction cancelled", "Transaction was cancelled/declined.");
-        }
-        return;
-      }
-
-      // Xaman/Xumm resolved payload:
-      // { signed: true|false, reason?: 'DECLINED'|'EXPIRED'..., ... }
-      if (msg?.signed === true) {
-        closeQrModal("Transaction signed", "Transaction completed successfully!", "success");
-        const requestBody = {
-          account: myWalletAddress,
-          offerType: createdOfferType,
-        };
-        console.log("requestBody for mCredit deduction:", requestBody);
-        const response = fetch(`${API_URLS.backendUrl}/deduct-mCredit`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(requestBody),
-        });
-        console.log("deduction result:", response);
-        onAction?.(); // refresh data if provided
-        return;
-      }
-      if (msg?.signed === false) {
-        const why = (msg?.reason || "Declined").toString().toLowerCase();
-        closeQrModal("Transaction declined", `Transaction was ${why}.`);
-        return;
-      }
-
-      // Extra guards for alternate shapes
-      if (msg?.cancelled || msg?.canceled || msg?.expired) {
-        closeQrModal("Transaction cancelled", /*"Transaction was cancelled/expired."*/);
-        return;
-      }
-    };
-
-    ws.onerror = () => {
-      // Treat errors as a cancelled flow but don't spam
-      closeQrModal("Connection error", /*"Wallet connection error. Please try again."*/ "");
-    };
-
-    ws.onclose = () => {
-      // If the QR modal is still open with no resolution, close gracefully
-      if (isQrModalVisible) {
-        closeQrModal("Connection closed", /*"Wallet connection closed."*/ "");
-      }
-    };
-
-    return () => {
-      try { ws.close(); } catch { }
-      wsRef.current = null;
-    };
-  }, [websocketUrl, isQrModalVisible, onAction]);
-
 
   const getMxidLocalPart = (mxid) =>
     mxid?.includes(":") ? mxid.split(":")[0]?.replace("@", "") : undefined;
 
   const handleTransfer = async () => {
     if (selectedUser === "all") {
-      setMessageBoxType("error");
-      setMessageBoxText("Please select a user to transfer the NFT.");
-      setIsMessageBoxVisible(true);
+      showMessage("error", "Please select a user to transfer the NFT.");
       return;
     }
     const destinationAddress = getMxidLocalPart(
@@ -216,47 +131,23 @@ const NFTModal = ({
       sender: myWalletAddress,
     };
 
-    try {
-      setCreatedOfferType("create_transfer_offer");
-      setIsLoading(true);
-      const res = await fetch(`${API_URLS.backendUrl}/create-nft-offer`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json();
-      setIsLoading(false);
-
-      if (data?.result === "NotEnoughCredit") {
-        setMessageBoxType("error");
-        setMessageBoxText("You don't have enough mCredits to create this transfer.");
-        setIsMessageBoxVisible(true);
-        return;
-      }
-      if (data?.refs) {
-        setQrCodeUrl(data.refs.qr_png);
-        setWebsocketUrl(data.refs.websocket_status);
-        setIsQrModalVisible(true);
-      }
-    } catch {
-      setIsLoading(false);
-      setMessageBoxType("error");
-      setMessageBoxText("Error creating transfer offer. Please try again.");
-      setIsMessageBoxVisible(true);
-    }
+    await executeTransaction({
+      endpoint: "/create-nft-offer",
+      payload,
+      offerType: "create_transfer_offer",
+      successMessage: "NFT transfer completed successfully!",
+      errorMessage: "Error creating transfer offer. Please try again.",
+      insufficientCreditMessage: "You don't have enough mCredits to create this transfer.",
+    });
   };
 
   const handleSellOffer = async () => {
     if (!isPositive(amount)) {
-      setMessageBoxType("error");
-      setMessageBoxText("Please enter a valid positive amount.");
-      setIsMessageBoxVisible(true);
+      showMessage("error", "Please enter a valid positive amount.");
       return;
     }
     if (!isListing && selectedUser === "all") {
-      setMessageBoxType("error");
-      setMessageBoxText("Please select a buyer or enable public listing.");
-      setIsMessageBoxVisible(true);
+      showMessage("error", "Please select a buyer or enable public listing.");
       return;
     }
 
@@ -279,44 +170,21 @@ const NFTModal = ({
       sender: myWalletAddress,
     };
 
-    try {
-      setCreatedOfferType("create_sell_offer");
-      setIsLoading(true);
-      const res = await fetch(`${API_URLS.backendUrl}/create-nft-offer`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json();
-      setIsLoading(false);
-
-      if (data?.result === "NotEnoughCredit") {
-        setMessageBoxType("error");
-        setMessageBoxText("You don't have enough mCredits to create this offer.");
-        setIsMessageBoxVisible(true);
-        return;
-      }
-      if (data?.refs) {
-        setQrCodeUrl(data.refs.qr_png);
-        setWebsocketUrl(data.refs.websocket_status);
-        setIsQrModalVisible(true);
-      }
-    } catch {
-      setIsLoading(false);
-      setMessageBoxType("error");
-      setMessageBoxText("Error creating sell offer. Please try again.");
-      setIsMessageBoxVisible(true);
-    }
+    await executeTransaction({
+      endpoint: "/create-nft-offer",
+      payload,
+      offerType: "create_sell_offer",
+      successMessage: "Sell offer created successfully!",
+      errorMessage: "Error creating sell offer. Please try again.",
+      insufficientCreditMessage: "You don't have enough mCredits to create this offer.",
+    });
   };
 
   const handleBuyOffer = async () => {
     if (!isPositive(amount)) {
-      setMessageBoxType("error");
-      setMessageBoxText("Please enter a valid positive amount.");
-      setIsMessageBoxVisible(true);
+      showMessage("error", "Please enter a valid positive amount.");
       return;
     }
-    setCreatedOfferType("create_buy_offer");
 
     const offerAmount =
       currency === "XRP"
@@ -332,33 +200,14 @@ const NFTModal = ({
     console.log("NFT data:", nft);
     console.log("Buy offer payload:", payload);
 
-    try {
-      setIsLoading(true);
-      const res = await fetch(`${API_URLS.backendUrl}/create-nft-buy-offer`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json();
-      setIsLoading(false);
-
-      if (data?.result === "NotEnoughCredit") {
-        setMessageBoxType("error");
-        setMessageBoxText("You don't have enough mCredits to create this offer.");
-        setIsMessageBoxVisible(true);
-        return;
-      }
-      if (data?.refs) {
-        setQrCodeUrl(data.refs.qr_png);
-        setWebsocketUrl(data.refs.websocket_status);
-        setIsQrModalVisible(true);
-      }
-    } catch {
-      setIsLoading(false);
-      setMessageBoxType("error");
-      setMessageBoxText("Error creating buy offer. Please try again.");
-      setIsMessageBoxVisible(true);
-    }
+    await executeTransaction({
+      endpoint: "/create-nft-buy-offer",
+      payload,
+      offerType: "create_buy_offer",
+      successMessage: "Buy offer created successfully!",
+      errorMessage: "Error creating buy offer. Please try again.",
+      insufficientCreditMessage: "You don't have enough mCredits to create this offer.",
+    });
   };
 
   const resetForm = () => {

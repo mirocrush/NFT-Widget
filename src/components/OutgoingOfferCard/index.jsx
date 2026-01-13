@@ -1,160 +1,46 @@
-import React, { useEffect, useState, useRef } from "react";
-import API_URLS from "../../config";
+import React from "react";
 import TransactionModal from "../TransactionModal";
 import NFTMessageBox from "../NFTMessageBox";
-import {X} from "lucide-react";
+import { X } from "lucide-react";
+import { useTransactionHandler } from "../../hooks/useTransactionHandler";
 import nft_pic from "../../assets/nft.png";
 
 const OutgoingOfferCard = ({ transfer, index, onAction, myWalletAddress }) => {
-  const [qrCodeUrl, setQrCodeUrl] = useState("");
-  const [websocketUrl, setWebsocketUrl] = useState("");
-  const [transactionStatus, setTransactionStatus] = useState("");
-  const [isQrModalVisible, setIsQrModalVisible] = useState(false);
-  const [isMessageBoxVisible, setIsMessageBoxVisible] = useState(false);
-  const [messageBoxType, setMessageBoxType] = useState("success");
-  const [messageBoxText, setMessageBoxText] = useState("");
-
-  const wsRef = useRef(null);
-
-  const safeParse = (v) => {
-    try { return JSON.parse(v); } catch { return v; }
-  };
-
-  const closeQrModal = (statusText, toastText, toastType = "error") => {
-    console.log('closeQRModal', { statusText, toastText, toastType });
-    setTransactionStatus(statusText || "");
-    setIsQrModalVisible(false);
-    try { wsRef.current?.close(); } catch { }
-    wsRef.current = null;
-    if (toastText) {
-      setMessageBoxType(toastType);
-      setMessageBoxText(toastText);
-      setIsMessageBoxVisible(true);
-    }
-  };
+  // Use transaction handler hook
+  const {
+    isQrModalVisible,
+    qrCodeUrl,
+    transactionStatus,
+    isMessageBoxVisible,
+    messageBoxType,
+    messageBoxText,
+    setIsMessageBoxVisible,
+    executeTransaction,
+    closeQrModal,
+  } = useTransactionHandler({
+    myWalletAddress,
+    onTransactionComplete: onAction,
+  });
 
 
   async function onRejectTransfer() {
     console.log("onRejectTransfer for item:", transfer);
+
     const requestBody = {
       account: myWalletAddress,
       offerId: transfer.offer.offerId,
     };
     console.log("requestBody:", requestBody);
-    try {
-      const response = await fetch(
-        `${API_URLS.backendUrl}/cancel-nft-offer-with-sign`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(requestBody),
-        }
-      );
-      console.log(requestBody, "requestBody");
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      // setIsQrModalVisible(false);
-
-      const data = await response.json();
-      if (data) {
-        if (data?.result === "NotEnoughCredit") {
-          setMessageBoxType("error");
-          setMessageBoxText(
-            "You don't have enough mCredits to create this offer.\nPlease buy more mCredits."
-          );
-          setIsMessageBoxVisible(true);
-          return;
-        }
-
-        console.log(data.refs, "data refs");
-        setQrCodeUrl(data.refs.qr_png);
-        setWebsocketUrl(data.refs.websocket_status);
-        setIsQrModalVisible(true);
-        // onAction();
-      }
-    } catch (error) {
-      console.error("Error during fetch:", error);
-    }
+    await executeTransaction({
+      endpoint: "/cancel-nft-offer-with-sign",
+      payload: requestBody,
+      offerType: "cancel_transfer_offer",
+      successMessage: "Transfer cancelled successfully!",
+      errorMessage: "Error cancelling transfer. Please try again.",
+      insufficientCreditMessage: "You don't have enough mCredits to cancel this offer.\nPlease buy more mCredits.",
+    });
   }
-
-  useEffect(() => {
-    if (!websocketUrl) return;
-
-    console.log("Setting up WebSocket connection to:", websocketUrl);
-
-    // Close any previous socket
-    try { wsRef.current?.close(); } catch { }
-    const ws = new WebSocket(websocketUrl);
-    wsRef.current = ws;
-
-    ws.onmessage = (event) => {
-      const msg = safeParse(event.data || "");
-      console.log("WebSocket message received:", msg);
-
-      // Some gateways send plain strings for simple states
-      if (typeof msg === "string") {
-        if (/declin|reject|cancel|close|abort|deny|expire/i.test(msg)) {
-          closeQrModal("Transaction cancelled", "Transaction was cancelled/declined.");
-        }
-        return;
-      }
-
-      if (msg?.signed === true) {
-        closeQrModal("Transaction signed", "Transaction completed successfully!", "success");
-        const requestBody = {
-          account: myWalletAddress,
-          offerType: "accept_transfer_offer",
-        };
-        console.log("requestBody for mCredit deduction:", requestBody);
-        const response = fetch(`${API_URLS.backendUrl}/deduct-mCredit`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(requestBody),
-        });
-        console.log("deduction result:", response);
-        // onAction?.();
-        return;
-      } else if (msg?.rejected) {
-        const why = (msg?.reason || "Declined").toString().toLowerCase();
-        closeQrModal("Transaction declined", `Transaction was ${why}.`);
-        return;
-      }
-
-            // Extra guards for alternate shapes
-      if (msg?.cancelled || msg?.canceled || msg?.expired) {
-        closeQrModal("Transaction cancelled", /*"Transaction was cancelled/expired."*/);
-        return;
-      }
-    };
-
-    ws.onerror = () => {
-      // Treat errors as a cancelled flow but don't spam
-      console.log("WebSocket error occurred");
-      closeQrModal("Connection error", /*"Wallet connection error. Please try again."*/ "");
-      return;
-    };
-
-    ws.onclose = () => {
-      // If the QR modal is still open with no resolution, close gracefully
-      console.log("WebSocket connection closed");
-      if (isQrModalVisible) {
-        closeQrModal("Connection closed", /*"Wallet connection closed."*/ "");
-        return;
-      }
-    };
-
-    return () => {
-      console.log("Cleaning up WebSocket connection");
-      // try { ws.close(); } catch { }
-      wsRef.current = null;
-    };
-  }, [websocketUrl/*, isQrModalVisible, onAction*/]);
 
   return (
     <div className="bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm rounded-2xl shadow-lg border border-gray-200/50 dark:border-gray-700/50 p-6 hover:shadow-xl transition-all duration-300">
