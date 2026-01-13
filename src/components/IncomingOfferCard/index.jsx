@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import TransactionModal from "../TransactionModal";
 import NFTMessageBox from "../NFTMessageBox";
+import LoadingOverlayForCard from "../LoadingOverlayForCard";
 import { Check, X } from "lucide-react";
 import { useTransactionHandler } from "../../hooks/useTransactionHandler";
 import nft_pic from "../../assets/nft.png";
@@ -20,6 +21,7 @@ const IncomingOfferCard = ({
 
   // Use transaction handler hook with custom completion logic
   const {
+    isLoading,
     isQrModalVisible,
     qrCodeUrl,
     transactionStatus,
@@ -110,7 +112,12 @@ const IncomingOfferCard = ({
   }
 
   return (
-    <div className="bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm rounded-2xl shadow-lg border border-gray-200/50 dark:border-gray-700/50 p-6 hover:shadow-xl transition-all duration-300">
+    <div className="relative bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm rounded-2xl shadow-lg border border-gray-200/50 dark:border-gray-700/50 p-6 hover:shadow-xl transition-all duration-300">
+      {isLoading && (
+        <div className="absolute inset-0 z-10">
+          <LoadingOverlayForCard />
+        </div>
+      )}
       <div className="flex flex-col md:flex-row items-center gap-6">
         <img
           src={transfer.nft.imageURI || nft_pic}
@@ -139,14 +146,16 @@ const IncomingOfferCard = ({
         <div className="flex flex-col gap-2">
           <button
             onClick={onAcceptTransfer}
-            className="px-5 py-2 rounded-xl bg-green-500 hover:bg-green-600 text-white font-semibold text-sm shadow-md hover:shadow-lg transition-all duration-200 flex items-center justify-center gap-2"
+            disabled={isLoading}
+            className="px-5 py-2 rounded-xl bg-green-500 hover:bg-green-600 text-white font-semibold text-sm shadow-md hover:shadow-lg transition-all duration-200 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Check className="w-4 h-4" />
             Accept
           </button>
           <button
             onClick={onRejectTransfer}
-            className="px-5 py-2 rounded-xl bg-red-500 hover:bg-red-600 text-white font-semibold text-sm shadow-md hover:shadow-lg transition-all duration-200 flex items-center justify-center gap-2"
+            disabled={isLoading}
+            className="px-5 py-2 rounded-xl bg-red-500 hover:bg-red-600 text-white font-semibold text-sm shadow-md hover:shadow-lg transition-all duration-200 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <X className="w-4 h-4" />
             Reject
