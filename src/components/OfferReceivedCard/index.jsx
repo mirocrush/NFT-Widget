@@ -400,13 +400,13 @@ const OfferReceivedCard = ({
                 )}
 
               </button>
-              <button
+              {/* <button
                 onClick={onCancelOffer}
                 className="px-5 py-2 rounded-xl bg-red-500 hover:bg-red-600 text-white font-semibold text-sm shadow-md hover:shadow-lg transition-all duration-200 flex items-center justify-center gap-2"
               >
                 <X className="w-4 h-4" />
                 Reject
-              </button>
+              </button> */}
             </div>
           </div>
           <TransactionModal
