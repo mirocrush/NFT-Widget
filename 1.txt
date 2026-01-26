@@ -1,0 +1,194 @@
+# NFT Widget API Route Reference
+
+Authoritative reference for integrating the shared NFT widget (frontend) with the existing backend NFT routes. All routes live in the TextRP-backend project (`start/routes.ts`) and return wallet-aware responses (Xumm or WalletConnect). Use these definitions when calling from another codebase.
+
+**Base URL**: `${SdkConfig.get('backend_url')}` (frontend) or your deployed backend origin.
+
+---
+
+## Response Types (wallet-aware)
+Every NFT route returns one of two shapes depending on detected wallet provider (from `auth_provider` / `WalletDetectionService`):
+
+- **Xumm**
+  ```json
+  {
+    "type": "xumm",
+    "user_token": "...",
+    "created": {
+      "refs": {
+        "qr_png": "https://...png",
+        "websocket_status": "wss://..."
+      }
+    }
+  }
+  ```
+  Use Xumm SDK/QR flow.
+
+- **WalletConnect (mobile wallets like Joey)**
+  ```json
+  {
+    "type": "walletconnect",
+    "transaction": { /* unsigned XRPL txn, autofilled */ },
+    "wallet": "walletconnect"
+  }
+  ```
+  Show transaction preview; user signs in Joey/Atomic/etc.; then POST the signed blob to `/nft/submit-transaction`.
+
+---
+
+## 1) Create NFT Sell / Transfer Offer
+`POST /create-nft-offer`
+
+Creates a sell offer (amount > 0) or transfer offer (amount empty or "0" and receiver specific).
+
+**Body**
+```json
+{
+  "sender": "string",    // Seller address (owner creating offer)
+  "receiver": "string",  // Buyer address or 'all' for open offer
+  "nft": "string",       // NFTokenID
+  "amount": "string"     // XRP amount in human units; empty/"0" -> transfer
+}
+```
+
+**Response**
+- Xumm payload (QR + websocket) **or** WalletConnect unsigned transaction (see Response Types above).
+
+**Notes**
+- Backend may cancel previous sell offers for this NFT before creating a new one.
+- Destination defaults to broker wallet unless `receiver !== 'all'`.
+
+---
+
+## 2) Create NFT Buy Offer
+`POST /create-nft-buy-offer`
+
+Creates a buy offer from a buyer to current owner.
+
+**Body**
+```json
+{
+  "nft": "string",      // NFTokenID
+  "amount": number,      // Bid price in XRP (e.g., 10.5)
+  "owner": "string",    // Current owner address
+  "account": "string"   // Buyer address (payer)
+}
+```
+
+**Response**
+- Xumm payload **or** WalletConnect unsigned transaction.
+
+**Notes**
+- Backend converts `amount` to drops and autofills fee/sequence/LastLedgerSequence.
+- Destination is broker wallet to mediate acceptance.
+
+---
+
+## 3) Accept NFT Offer (buy or sell)
+`POST /accept-buy-or-sell-offer`
+
+Accepts an existing offer. `buyOrSell` selects which side you are accepting.
+
+**Body**
+```json
+{
+  "address": "string",   // Signer address (the accepter)
+  "OfferId": "string",   // Offer ID to accept
+  "buyOrSell": number     // 0 = accept sell offer (you buy), 1 = accept buy offer (you sell)
+}
+```
+
+**Response**
+- Xumm payload **or** WalletConnect unsigned transaction.
+
+**Notes**
+- Backend builds `NFTokenAcceptOffer` with appropriate fields (NFTokenSellOffer or NFTokenBuyOffer).
+
+---
+
+## 4) Cancel NFT Offer
+`POST /cancel-nft-offer-with-sign`
+
+Cancels a specific offer created by the user.
+
+**Body**
+```json
+{
+  "account": "string",  // Signer address
+  "offerId": "string"   // Offer ID to cancel
+}
+```
+
+**Response**
+- Xumm payload **or** WalletConnect unsigned transaction.
+
+**Notes**
+- Backend prepares `NFTokenCancelOffer` with `NFTokenOffers: [offerId]` and autofills.
+
+---
+
+## 5) Submit WalletConnect Transaction (signed)
+`POST /nft/submit-transaction`
+
+Used **only for WalletConnect/mobile wallets** (e.g., Joey). After the user signs the unsigned transaction returned by any of the above routes, submit the signed payload here for on-ledger execution.
+
+**Body**
+```json
+{
+  "signedTransaction": "string",       // Full signed XRPL tx blob/object from wallet
+  "transactionType": "string",         // 'sell' | 'buy' | 'accept' | 'cancel'
+  "sender": "string"                   // Signer address
+}
+```
+
+**Response**
+```json
+{
+  "success": true,
+  "txid": "string",                    // XRPL transaction hash
+  "type": "walletconnect"
+}
+```
+
+**Notes**
+- Backend calls `xrpl.Client.submitAndWait` with your signed blob.
+- Frontend should display success using returned `txid`.
+- Not used for Xumm flows (Xumm submits directly).
+
+---
+
+## Frontend Integration Pattern (Widget)
+1. Call one of the create/accept/cancel routes.
+2. Inspect `response.type`:
+   - `xumm`: show QR / websocket flow.
+   - `walletconnect`: show transaction preview, invoke WalletConnect (Joey mobile) to sign.
+3. After signing in Joey, send the signed transaction to `POST /nft/submit-transaction` with `transactionType` + `sender`.
+4. Show success using returned `txid`.
+
+---
+
+## Parameter Reference (concise)
+- **sender / account / address**: XRPL address of the user performing the action.
+- **receiver**: Target address or `'all'` for open offers.
+- **nft / nftId / NFTokenID**: The NFT token ID (hex string).
+- **amount**: XRP amount in human units (string/number as noted); backend converts to drops.
+- **OfferId**: NFT offer index to accept or cancel.
+- **buyOrSell**: `0` (accept sell) or `1` (accept buy).
+- **signedTransaction**: Signed transaction blob/object from the wallet (WalletConnect/mobile only).
+- **transactionType**: One of `sell | buy | accept | cancel` to label submission.
+
+---
+
+## Example WalletConnect (Joey) Flow
+- POST `/create-nft-offer` → receive `{ type: 'walletconnect', transaction: {...} }`.
+- Use WalletConnect/Joey mobile to sign `transaction`.
+- POST `/nft/submit-transaction` with the signed blob and `transactionType: 'sell'`.
+- Receive `{ success: true, txid: '...' }` → display success.
+
+---
+
+## Notes for Consumers
+- All endpoints are unauthenticated at route level; app auth/context may still apply.
+- Backend auto-detects wallet provider from stored `auth_provider`; ensure login flow sets it correctly (`xrpl-jwt-walletconnect` for Joey/WalletConnect, `xrpl-jwt-xumm` for Xumm).
+- Amount conversions and autofill (Fee, Sequence, LastLedgerSequence) are handled server-side.
+- For transfers (no payment), send `amount: "0"` or leave empty and set a specific `receiver`.

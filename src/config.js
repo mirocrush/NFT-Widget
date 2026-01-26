@@ -8,8 +8,7 @@ const API_URLS = {
   xrplTestnetUrl: process.env.REACT_APP_XRPL_TEST_NET_URL,
   brokerWalletAddress: process.env.REACT_APP_BROKER_WALLET_ADDRESS,
   systemWalletAddress: process.env.REACT_APP_SYSTEM_WALLET_ADDRESS,
-  bithompToken: process.env.REACT_APP_BITHOMP_TOKEN, // DEPRECATED - kept for backward compatibility
-  dhaliPaymentClaim: process.env.REACT_APP_DHALI_PAYMENT_CLAIM, // NEW - Dhali payment claim
+  bithompToken: process.env.REACT_APP_BITHOMP_TOKEN,
 };
 
 export default API_URLS;
