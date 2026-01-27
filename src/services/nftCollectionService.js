@@ -26,14 +26,43 @@ export const groupNFTsByCollection = (resolvedNFTs) => {
     const collectionKey = `${nft.issuer}-${nft.taxon}`;
     
     if (!collections[collectionKey]) {
+      // Try to get collection name from various sources
+      let collectionName = nft.collection?.name || nft.collection?.family;
+      
+      // If no collection name, try to derive from NFT metadata
+      if (!collectionName && nft.metadata) {
+        if (nft.metadata.collection?.name) {
+          collectionName = nft.metadata.collection.name;
+        } else if (nft.metadata.name) {
+          // Use the NFT's name as collection name (will be refined as more NFTs are added)
+          collectionName = nft.metadata.name;
+        } else if (nft.name) {
+          collectionName = nft.name;
+        }
+      }
+      
+      // Fallback to issuer address format (more informative than just taxon)
+      if (!collectionName) {
+        const shortIssuer = `${nft.issuer.substring(0, 6)}...${nft.issuer.substring(nft.issuer.length - 4)}`;
+        collectionName = `${shortIssuer} (Taxon ${nft.taxon})`;
+      }
+      
       collections[collectionKey] = {
         issuer: nft.issuer,
         taxon: nft.taxon,
-        collectionName: nft.collection?.name || `Collection ${nft.taxon}`,
+        collectionName: collectionName,
         nfts: [],
         count: 0,
         sampleImage: null
       };
+    } else {
+      // Update collection name if we find a better one
+      const currentName = collections[collectionKey].collectionName;
+      if (currentName.includes('Taxon') && nft.collection?.name) {
+        collections[collectionKey].collectionName = nft.collection.name;
+      } else if (currentName.includes('Taxon') && nft.metadata?.collection?.name) {
+        collections[collectionKey].collectionName = nft.metadata.collection.name;
+      }
     }
     
     collections[collectionKey].nfts.push(nft);
