@@ -551,42 +551,6 @@ const Offers = ({
       console.error("❌ Error fetching NFT offers:", error);
     }
   };
-                  nftId: offer.nftokenID,
-                  isSell: offer.flags?.sellToken || false,
-                  destination: offer.destination,
-                  valid: offer.valid,
-                  validationErrors: offer.validationErrors,
-                  createdAt: offer.createdAt,
-                  expiration: offer.expiration,
-                },
-                nft: nftData
-                  ? {
-                      ...nftData,
-                      nftokenID: offer.nftokenID,
-                      metadata:
-                        nftData.metadata || offer.nftoken?.metadata,
-                      imageURI:
-                        nftData?.assets?.preview ||
-                        offer.nftoken?.metadata?.image,
-                      name:
-                        nftData.name || offer.nftoken?.metadata?.name,
-                    }
-                  : null,
-              });
-            }
-          });
-      }
-
-      console.log("📤 Made offers (after filtering):", madeOffers_);
-      console.log("📥 Received offers (after filtering):", receivedOffers_);
-      console.log("📊 Summary:", data.summary);
-
-      setMadeOffers(madeOffers_);
-      setReceivedOffers(receivedOffers_);
-    } catch (error) {
-      console.error("❌ Error fetching NFT offers:", error);
-    }
-  };
 
   const refreshOffers = async () => {
     console.log("Offers->refreshOffers", myWalletAddress);
