@@ -195,7 +195,7 @@ const NFTModal = ({
       nft: nft.nftokenID,
       amount: offerAmount,
       account: myWalletAddress,
-      owner: nft.owner,
+      owner: nft.ownerWallet,
     };
     console.log("NFT data:", nft);
     console.log("Buy offer payload:", payload);
