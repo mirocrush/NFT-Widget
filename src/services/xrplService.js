@@ -120,6 +120,7 @@ const transformOfferToBithompFormat = (offer, nftMetadata = null, type = 'sell')
             sellToken: isSellToken
         },
         owner: offer.Owner,
+        account: offer.Owner, // for backward compatibility with UI expectations
         destination: offer.Destination || null,
         expiration: offer.Expiration || null,
         nftokenID: offer.NFTokenID,
