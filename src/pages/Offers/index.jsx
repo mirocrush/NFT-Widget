@@ -315,10 +315,10 @@ const Offers = ({
 
   const fetchAllUsersOfers = async () => {
     try {
-      console.log("🔍 Fetching NFT offers from Bithomp for:", myWalletAddress);
+      console.log("🔍 Fetching NFT offers from Dhali for:", myWalletAddress);
 
       const data = await getAllNFTOffers(myWalletAddress);
-      console.log("✅ NFT offers data from Bithomp:", data);
+      console.log("✅ NFT offers data from Dhali:", data);
 
       const brokerWalletAddress = API_URLS.brokerWalletAddress?.trim();
       console.log("🏦 Broker wallet address:", brokerWalletAddress);
@@ -359,17 +359,20 @@ const Offers = ({
       const walletNftMap = {};
 
       myNftData.forEach((member) => {
-        member.groupedNfts.forEach((group) => {
-          group.nfts.forEach((nft) => {
+        member.groupedNfts?.forEach((group) => {
+          group.nfts?.forEach((nft) => {
             nftMapById.set(nft.nftokenID, { ...nft });
           });
         });
         const wallet = member.walletAddress;
-        const nftIds = member.groupedNfts.flatMap((group) =>
-          group.nfts.map((nft) => nft.nftokenID)
-        );
+        const nftIds = member.groupedNfts?.flatMap((group) =>
+          group.nfts?.map((nft) => nft.nftokenID) || []
+        ) || [];
         walletNftMap[wallet] = new Set(nftIds);
       });
+
+      console.log("📋 Wallet NFT Map:", walletNftMap);
+      console.log("📋 My wallet NFTs count:", walletNftMap[myWalletAddress]?.size || 0);
 
       const madeOffers_ = [];
       const receivedOffers_ = [];
@@ -390,7 +393,7 @@ const Offers = ({
                 offerId: offer.offerIndex,
                 amount: offer.amount,
                 offerOwner: offer.account,
-                offerOwnerName: resolveName(offer.account), // ← HERE
+                offerOwnerName: resolveName(offer.account),
                 nftId: offer.nftokenID,
                 isSell: offer.flags?.sellToken || false,
                 destination: offer.destination,
@@ -405,16 +408,24 @@ const Offers = ({
                     nftokenID: offer.nftokenID,
                     metadata: nftData.metadata || offer.nftoken?.metadata,
                     imageURI:
-                      nftData?.assets?.preview || offer.nftoken?.metadata?.image,
+                      nftData?.imageURI || 
+                      nftData?.assets?.preview || 
+                      nftData?.assets?.image ||
+                      offer.nftoken?.imageURI ||
+                      offer.nftoken?.assets?.preview ||
+                      offer.nftoken?.metadata?.image,
                     name:
-                      nftData.name || offer.nftoken?.metadata?.name,
+                      nftData.name || 
+                      nftData.metadata?.name ||
+                      offer.nftoken?.name ||
+                      offer.nftoken?.metadata?.name,
                   }
                 : null,
             });
           });
       }
 
-      // Counter offers (on NFTs you own)
+      // Counter offers (on NFTs you own) - BUY OFFERS from others on your NFTs
       if (data.counterOffers && data.counterOffers.length > 0) {
         console.log(
           `📥 Processing ${data.counterOffers.length} counter offers...`
@@ -423,16 +434,26 @@ const Offers = ({
         data.counterOffers
           .filter(isRelevantOffer)
           .forEach((offer) => {
+            console.log("🔍 Checking counter offer:", {
+              offerIndex: offer.offerIndex,
+              nftokenID: offer.nftokenID,
+              account: offer.account,
+              amount: offer.amount,
+              flags: offer.flags,
+              hasNFT: walletNftMap[myWalletAddress]?.has(offer.nftokenID)
+            });
+
             const nftData =
               offer.nftoken || nftMapById.get(offer.nftokenID);
 
             if (walletNftMap[myWalletAddress]?.has(offer.nftokenID)) {
+              console.log("✅ Counter offer is on my NFT, adding to receivedOffers");
               receivedOffers_.push({
                 offer: {
                   offerId: offer.offerIndex,
                   amount: offer.amount,
                   offerOwner: offer.account,
-                  offerOwnerName: resolveName(offer.account), // ← HERE
+                  offerOwnerName: resolveName(offer.account),
                   nftId: offer.nftokenID,
                   isSell: offer.flags?.sellToken || false,
                   destination: offer.destination,
@@ -448,13 +469,22 @@ const Offers = ({
                       metadata:
                         nftData.metadata || offer.nftoken?.metadata,
                       imageURI:
+                        nftData?.imageURI || 
                         nftData?.assets?.preview ||
+                        nftData?.assets?.image ||
+                        offer.nftoken?.imageURI ||
+                        offer.nftoken?.assets?.preview ||
                         offer.nftoken?.metadata?.image,
                       name:
-                        nftData.name || offer.nftoken?.metadata?.name,
+                        nftData.name || 
+                        nftData.metadata?.name ||
+                        offer.nftoken?.name ||
+                        offer.nftoken?.metadata?.name,
                     }
                   : null,
               });
+            } else {
+              console.log("❌ Counter offer NOT on my NFT, skipping");
             }
           });
       }
@@ -477,7 +507,50 @@ const Offers = ({
                   offerId: offer.offerIndex,
                   amount: offer.amount,
                   offerOwner: offer.account,
-                  offerOwnerName: resolveName(offer.account) , // ← HERE
+                  offerOwnerName: resolveName(offer.account),
+                  nftId: offer.nftokenID,
+                  isSell: offer.flags?.sellToken || false,
+                  destination: offer.destination,
+                  valid: offer.valid,
+                  validationErrors: offer.validationErrors,
+                  createdAt: offer.createdAt,
+                  expiration: offer.expiration,
+                },
+                nft: nftData
+                  ? {
+                      ...nftData,
+                      nftokenID: offer.nftokenID,
+                      metadata:
+                        nftData.metadata || offer.nftoken?.metadata,
+                      imageURI:
+                        nftData?.imageURI || 
+                        nftData?.assets?.preview ||
+                        nftData?.assets?.image ||
+                        offer.nftoken?.imageURI ||
+                        offer.nftoken?.assets?.preview ||
+                        offer.nftoken?.metadata?.image,
+                      name:
+                        nftData.name || 
+                        nftData.metadata?.name ||
+                        offer.nftoken?.name ||
+                        offer.nftoken?.metadata?.name,
+                    }
+                  : null,
+              });
+            }
+          });
+      }
+
+      console.log("📤 Made offers (after filtering):", madeOffers_);
+      console.log("📥 Received offers (after filtering):", receivedOffers_);
+      console.log("📊 Summary:", data.summary);
+
+      setMadeOffers(madeOffers_);
+      setReceivedOffers(receivedOffers_);
+    } catch (error) {
+      console.error("❌ Error fetching NFT offers:", error);
+    }
+  };
                   nftId: offer.nftokenID,
                   isSell: offer.flags?.sellToken || false,
                   destination: offer.destination,

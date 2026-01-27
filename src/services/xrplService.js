@@ -193,6 +193,7 @@ export const getNFTOffers = async (address, options = {}) => {
         } else if (list === 'counterOffers') {
             // Get offers ON user's NFTs (offers made by others)
             const userNFTs = await getAllAccountNFTs(address);
+            console.log(`📦 Found ${userNFTs.length} NFTs owned by ${address}`);
             
             const counterOfferPromises = userNFTs.map(async (nft) => {
                 try {
@@ -201,13 +202,23 @@ export const getNFTOffers = async (address, options = {}) => {
                         getNFTBuyOffers(nft.NFTokenID)
                     ]);
                     
+                    console.log(`🔍 NFT ${nft.NFTokenID}: ${sellOffers.offers?.length || 0} sell, ${buyOffers.offers?.length || 0} buy offers`);
+                    
                     const allOffers = [
                         ...(sellOffers.offers || []),
                         ...(buyOffers.offers || [])
                     ];
                     
                     // Filter out user's own offers (Dhali uses Owner with capital O)
-                    const otherOffers = allOffers.filter(o => o.Owner !== address);
+                    const otherOffers = allOffers.filter(o => {
+                        const isOthers = o.Owner !== address;
+                        if (!isOthers) {
+                            console.log(`⏭️ Skipping own offer: ${o.index || o.nft_offer_index}`);
+                        }
+                        return isOthers;
+                    });
+                    
+                    console.log(`✅ Found ${otherOffers.length} offers from others on NFT ${nft.NFTokenID}`);
                     
                     if (nftoken && assets && otherOffers.length > 0) {
                         const metadata = await resolveNFTMetadata(nft);
@@ -223,6 +234,7 @@ export const getNFTOffers = async (address, options = {}) => {
             
             const allCounterOffers = await Promise.all(counterOfferPromises);
             nftOffers = allCounterOffers.flat();
+            console.log(`📊 Total counter offers found: ${nftOffers.length}`);
 
         } else if (list === 'privatelyOfferedToAddress') {
             // Get offers privately offered TO this address (Destination === address)
