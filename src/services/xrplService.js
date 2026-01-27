@@ -2,9 +2,16 @@ import {
     Client
 } from 'xrpl';
 import API_URLS from '../config.js';
+import { 
+    getAccountNFTOffers, 
+    getAllAccountNFTs, 
+    getNFTSellOffers, 
+    getNFTBuyOffers 
+} from './dhaliService';
+import { resolveNFTMetadata } from './metadataResolver';
 
 const XRPL_NODE = 'wss://s.altnet.rippletest.net:51233'; // Using testnet, change to mainnet for production
-const BITHOMP_API_BASE = 'https://bithomp.com/api/v2';
+const BITHOMP_API_BASE = 'https://bithomp.com/api/v2'; // Legacy - kept for reference
 
 const isValidAmount = (amount) => {
     if (!amount) return false;
@@ -96,7 +103,39 @@ export const getWalletOffers = async (walletAddress) => {
 };
 
 /**
- * Fetch NFT offers for a given address from Bithomp API
+ * Transform Dhali offer to Bithomp-compatible format
+ * @param {Object} offer - Raw Dhali offer object
+ * @param {Object} nftMetadata - Resolved NFT metadata
+ * @param {string} type - 'sell' or 'buy'
+ * @returns {Object} Bithomp-compatible offer
+ */
+const transformOfferToBithompFormat = (offer, nftMetadata = null, type = 'sell') => {
+    // Parse Flags to determine offer type
+    const isSellToken = (offer.Flags & 0x00000001) !== 0; // lsfSellNFToken flag
+    
+    return {
+        offerIndex: offer.index || offer.nft_offer_index,
+        amount: offer.Amount,
+        flags: {
+            sellToken: isSellToken
+        },
+        owner: offer.Owner,
+        destination: offer.Destination || null,
+        expiration: offer.Expiration || null,
+        nftokenID: offer.NFTokenID,
+        valid: true, // Dhali returns only valid on-ledger offers
+        nftoken: nftMetadata ? {
+            nftokenID: nftMetadata.nftokenID,
+            metadata: nftMetadata.metadata,
+            assets: {
+                image: nftMetadata.image
+            }
+        } : null
+    };
+};
+
+/**
+ * Fetch NFT offers for a given address using Dhali API
  * @param {string} address - The XRPL address
  * @param {Object} options - Additional options for the API call
  * @returns {Promise<Object>} NFT offers data
@@ -105,45 +144,114 @@ export const getNFTOffers = async (address, options = {}) => {
     try {
         const {
             list = null, // null (default), 'counterOffers', 'privatelyOfferedToAddress'
-                nftoken = true, // Include NFT token data and metadata
-                offersValidate = true, // Include validation status
-                assets = true // Include asset URLs (requires Standard API plan)
+            nftoken = true, // Include NFT token data and metadata
+            offersValidate = true, // Include validation status (always true with Dhali)
+            assets = true // Include asset URLs
         } = options;
 
-        // Build query parameters
-        const queryParams = new URLSearchParams();
-        if (list) queryParams.append('list', list);
-        if (nftoken) queryParams.append('nftoken', 'true');
-        if (offersValidate) queryParams.append('offersValidate', 'true');
-        if (assets) queryParams.append('assets', 'true');
+        let nftOffers = [];
 
-        const url = `${BITHOMP_API_BASE}/nft-offers/${address}?${queryParams.toString()}`;
-
-        const response = await fetch(url, {
-            method: 'GET',
-            headers: {
-                'x-bithomp-token': API_URLS.bithompToken,
-                'Content-Type': 'application/json'
+        if (list === null) {
+            // Default: Get offers created BY the user (from account_objects)
+            const offerObjects = await getAccountNFTOffers(address);
+            
+            // Resolve metadata if requested
+            if (nftoken && offerObjects.length > 0) {
+                const metadataPromises = offerObjects.map(async (offer) => {
+                    try {
+                        // Get NFT details for metadata
+                        const nfts = await getAllAccountNFTs(address, 50);
+                        const nft = nfts.find(n => n.NFTokenID === offer.NFTokenID);
+                        
+                        if (nft && assets) {
+                            const metadata = await resolveNFTMetadata(nft);
+                            return transformOfferToBithompFormat(offer, metadata, 'sell');
+                        }
+                        return transformOfferToBithompFormat(offer, null, 'sell');
+                    } catch (error) {
+                        console.warn(`Could not resolve metadata for ${offer.NFTokenID}:`, error);
+                        return transformOfferToBithompFormat(offer, null, 'sell');
+                    }
+                });
+                
+                nftOffers = await Promise.all(metadataPromises);
+            } else {
+                nftOffers = offerObjects.map(o => transformOfferToBithompFormat(o, null, 'sell'));
             }
-        });
 
-        if (!response.ok) {
-            throw new Error(`Bithomp API error: ${response.status} ${response.statusText}`);
+        } else if (list === 'counterOffers') {
+            // Get offers ON user's NFTs (offers made by others)
+            const userNFTs = await getAllAccountNFTs(address);
+            
+            const counterOfferPromises = userNFTs.map(async (nft) => {
+                try {
+                    const [sellOffers, buyOffers] = await Promise.all([
+                        getNFTSellOffers(nft.NFTokenID),
+                        getNFTBuyOffers(nft.NFTokenID)
+                    ]);
+                    
+                    const allOffers = [
+                        ...(sellOffers.offers || []),
+                        ...(buyOffers.offers || [])
+                    ];
+                    
+                    // Filter out user's own offers
+                    const otherOffers = allOffers.filter(o => o.owner !== address);
+                    
+                    if (nftoken && assets && otherOffers.length > 0) {
+                        const metadata = await resolveNFTMetadata(nft);
+                        return otherOffers.map(o => transformOfferToBithompFormat(o, metadata));
+                    }
+                    
+                    return otherOffers.map(o => transformOfferToBithompFormat(o, null));
+                } catch (error) {
+                    return [];
+                }
+            });
+            
+            const allCounterOffers = await Promise.all(counterOfferPromises);
+            nftOffers = allCounterOffers.flat();
+
+        } else if (list === 'privatelyOfferedToAddress') {
+            // Get offers privately offered TO this address (Destination === address)
+            const userNFTs = await getAllAccountNFTs(address);
+            
+            const privateOfferPromises = userNFTs.map(async (nft) => {
+                try {
+                    const [sellOffers, buyOffers] = await Promise.all([
+                        getNFTSellOffers(nft.NFTokenID),
+                        getNFTBuyOffers(nft.NFTokenID)
+                    ]);
+                    
+                    const allOffers = [
+                        ...(sellOffers.offers || []),
+                        ...(buyOffers.offers || [])
+                    ];
+                    
+                    // Filter for offers with Destination === address
+                    const privateOffers = allOffers.filter(o => o.Destination === address);
+                    
+                    if (nftoken && assets && privateOffers.length > 0) {
+                        const metadata = await resolveNFTMetadata(nft);
+                        return privateOffers.map(o => transformOfferToBithompFormat(o, metadata));
+                    }
+                    
+                    return privateOffers.map(o => transformOfferToBithompFormat(o, null));
+                } catch (error) {
+                    return [];
+                }
+            });
+            
+            const allPrivateOffers = await Promise.all(privateOfferPromises);
+            nftOffers = allPrivateOffers.flat();
         }
 
-        const data = await response.json();
-
-        // ✅ Filter only valid offers
-        const validOffers = data.nftOffers ? data.nftOffers.filter(o => o.valid === true) : [];
-
         return {
-            ...data,
-            nftOffers: validOffers
+            nftOffers: nftOffers.filter(o => o.valid === true)
         };
 
-        // return data;
     } catch (error) {
-        console.error('Error fetching NFT offers from Bithomp:', error);
+        console.error('Error fetching NFT offers from Dhali:', error);
         throw error;
     }
 };
