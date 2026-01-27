@@ -113,9 +113,16 @@ const transformOfferToBithompFormat = (offer, nftMetadata = null, type = 'sell')
     // Parse Flags to determine offer type
     const isSellToken = (offer.Flags & 0x00000001) !== 0; // lsfSellNFToken flag
     
+    // Normalize amount: Dhali returns Amount field from XRPL
+    // For transfers (no payment), Amount is "0" or might be missing
+    let normalizedAmount = "0";
+    if (offer.Amount !== undefined && offer.Amount !== null) {
+        normalizedAmount = typeof offer.Amount === 'string' ? offer.Amount : String(offer.Amount);
+    }
+    
     return {
         offerIndex: offer.index || offer.nft_offer_index,
-        amount: offer.Amount,
+        amount: normalizedAmount,
         flags: {
             sellToken: isSellToken
         },
