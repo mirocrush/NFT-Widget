@@ -29,7 +29,7 @@ const OutgoingOfferCard = ({ transfer, index, onAction, myWalletAddress }) => {
     console.log("onRejectTransfer for item:", transfer);
 
     const requestBody = {
-      account: myWalletAddress,
+      owner: myWalletAddress,
       offerId: transfer.offer.offerId,
     };
     console.log("requestBody:", requestBody);
