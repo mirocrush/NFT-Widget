@@ -33,7 +33,7 @@ const OutgoingOfferCard = ({ transfer, index, onAction, myWalletAddress }) => {
       offerId: transfer.offer.offerId,
     };
     console.log("requestBody:", requestBody);
-
+ 
     await executeTransaction({
       endpoint: "/cancel-nft-offer-with-sign",
       payload: requestBody,
