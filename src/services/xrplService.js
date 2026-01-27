@@ -128,8 +128,11 @@ const transformOfferToBithompFormat = (offer, nftMetadata = null, type = 'sell')
         nftoken: nftMetadata ? {
             nftokenID: nftMetadata.nftokenID,
             metadata: nftMetadata.metadata,
+            imageURI: nftMetadata.image, // for UI display
+            name: nftMetadata.name,
             assets: {
-                image: nftMetadata.image
+                image: nftMetadata.image,
+                preview: nftMetadata.image // UI expects assets.preview
             }
         } : null
     };
@@ -196,8 +199,8 @@ export const getNFTOffers = async (address, options = {}) => {
                         ...(buyOffers.offers || [])
                     ];
                     
-                    // Filter out user's own offers
-                    const otherOffers = allOffers.filter(o => o.owner !== address);
+                    // Filter out user's own offers (Dhali uses Owner with capital O)
+                    const otherOffers = allOffers.filter(o => o.Owner !== address);
                     
                     if (nftoken && assets && otherOffers.length > 0) {
                         const metadata = await resolveNFTMetadata(nft);
@@ -206,6 +209,7 @@ export const getNFTOffers = async (address, options = {}) => {
                     
                     return otherOffers.map(o => transformOfferToBithompFormat(o, null));
                 } catch (error) {
+                    console.error(`Error fetching counter offers for NFT ${nft.NFTokenID}:`, error);
                     return [];
                 }
             });
