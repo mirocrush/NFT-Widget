@@ -549,6 +549,14 @@ const Offers = ({
       setReceivedOffers(receivedOffers_);
     } catch (error) {
       console.error("❌ Error fetching NFT offers:", error);
+      // Set empty arrays on error to prevent UI from showing stale data
+      setMadeOffers([]);
+      setReceivedOffers([]);
+      
+      // Show user-friendly error message
+      if (error.message?.includes('402') || error.message?.includes('Payment')) {
+        console.error("⚠️ Payment claim insufficient - unable to fetch offers. Please check your Dhali account.");
+      }
     }
   };
 

@@ -34,6 +34,8 @@ export const callDhaliAPI = async (method, params) => {
   }
 
   try {
+    console.log(`📡 Calling Dhali API: ${method}`);
+    
     const response = await axios.post(
       DHALI_ENDPOINT,
       {
@@ -49,16 +51,30 @@ export const callDhaliAPI = async (method, params) => {
     );
 
     if (response.data.result) {
+      console.log(`✅ ${method} returned result`);
       return response.data.result;
     } else if (response.data.error) {
+      console.error(`❌ Dhali API Error (${method}):`, response.data.error);
       throw new Error(`Dhali API Error: ${response.data.error.message || JSON.stringify(response.data.error)}`);
     } else {
+      console.log(`⚠️  ${method} returned non-standard response`);
       return response.data;
     }
   } catch (error) {
+    // Handle 402 Payment Required specifically
+    if (error.response?.status === 402) {
+      console.error(`❌ Dhali API Error (${method}): 402 Payment Required`);
+      console.error('Payment claim insufficient. Error details:', error.response?.data);
+      const detail = error.response?.data?.detail || 'Payment claim insufficient';
+      throw new Error(`Dhali: ${detail}`);
+    }
+    
     if (error.response?.data?.error) {
       console.error(`❌ Dhali API Error (${method}):`, error.response.data.error);
       throw new Error(`Dhali API: ${error.response.data.error.message || 'Unknown error'}`);
+    } else if (error.response?.data?.detail) {
+      console.error(`❌ Dhali API Error (${method}):`, error.response.data.detail);
+      throw new Error(`Dhali: ${error.response.data.detail}`);
     } else {
       console.error(`❌ Dhali API Error (${method}):`, error.message);
       throw error;
@@ -128,7 +144,7 @@ export const getAllAccountNFTs = async (address, maxNFTs = 400) => {
 };
 
 /**
- * Get sell offers for a specific NFT
+ * Get sell offers for a specific NFT (includes transfers with amount 0)
  * @param {string} nftokenID - NFT Token ID
  * @returns {Promise<Object>} Sell offers data
  */
@@ -138,18 +154,25 @@ export const getNFTSellOffers = async (nftokenID) => {
       nft_id: nftokenID,
       ledger_index: 'validated'
     });
+    
+    // Ensure offers array exists
+    if (result && !result.offers) {
+      result.offers = [];
+    }
+    
     return result;
   } catch (error) {
     // NFT might not have any sell offers
     if (error.message?.includes('objectNotFound') || error.message?.includes('not found')) {
       return { offers: [] };
     }
+    console.error(`❌ Error getting sell offers for ${nftokenID}:`, error);
     throw error;
   }
 };
 
 /**
- * Get buy offers for a specific NFT
+ * Get buy offers for a specific NFT (includes transfers with amount 0)
  * @param {string} nftokenID - NFT Token ID
  * @returns {Promise<Object>} Buy offers data
  */
@@ -159,12 +182,19 @@ export const getNFTBuyOffers = async (nftokenID) => {
       nft_id: nftokenID,
       ledger_index: 'validated'
     });
+    
+    // Ensure offers array exists
+    if (result && !result.offers) {
+      result.offers = [];
+    }
+    
     return result;
   } catch (error) {
     // NFT might not have any buy offers
     if (error.message?.includes('objectNotFound') || error.message?.includes('not found')) {
       return { offers: [] };
     }
+    console.error(`❌ Error getting buy offers for ${nftokenID}:`, error);
     throw error;
   }
 };
