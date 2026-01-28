@@ -340,7 +340,7 @@ const Offers = ({
           offer.destination === myWalletAddress ||
           offer.account === myWalletAddress
         ) {
-          console.log("✅ Direct offer (no broker):", offer.offerIndex);
+          console.log("✅ Direct offer (no broker)::", offer.offerIndex);
           return true;
         }
         console.log(
