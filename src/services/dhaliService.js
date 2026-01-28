@@ -12,9 +12,6 @@ import axios from 'axios';
 // Dhali XRPL Cluster Endpoint
 const DHALI_ENDPOINT = 'https://run.api.dhali.io/199fd80b-1776-4708-b1a1-4b2bb386435d/';
 
-// xrpldata.com API Endpoint (no authentication required)
-const XRPLDATA_API_BASE = 'https://api.xrpldata.com/api/v1';
-
 // Payment claim from environment variable
 const getPaymentClaim = () => {
   const claim = process.env.REACT_APP_DHALI_PAYMENT_CLAIM;
@@ -86,33 +83,27 @@ export const callDhaliAPI = async (method, params) => {
 };
 
 /**
- * Get all NFTs owned by an account using xrpldata.com
+ * Get all NFTs owned by an account
  * @param {string} address - XRPL account address
- * @param {Object} options - Additional options (not used with xrpldata API)
+ * @param {Object} options - Additional options
  * @returns {Promise<Object>} Account NFTs data
  */
 export const getAccountNFTs = async (address, options = {}) => {
-  try {
-    const url = `${XRPLDATA_API_BASE}/xls20-nfts/owner/${address}`;
-    
-    const response = await axios.get(url, {
-      headers: {
-        'Content-Type': 'application/json'
-      }
-    });
+  const {
+    limit = 400,
+    marker = undefined
+  } = options;
 
-    // xrpldata.com returns NFTs directly as an array
-    const nfts = Array.isArray(response.data) ? response.data : [];
-    
-    console.log(`✅ Fetched ${nfts.length} NFTs for ${address}`);
-    
-    // Return in a format compatible with existing code
-    return {
-      account_nfts: nfts,
-      account: address,
-      ledger_index: null,
-      validated: true
-    };
+  const params = {
+    account: address,
+    ledger_index: 'validated',
+    ...(limit && { limit }),
+    ...(marker && { marker })
+  };
+
+  try {
+    const result = await callDhaliAPI('account_nfts', params);
+    return result;
   } catch (error) {
     console.error(`❌ Error fetching NFTs for ${address}:`, error);
     throw error;
@@ -120,55 +111,59 @@ export const getAccountNFTs = async (address, options = {}) => {
 };
 
 /**
- * Get all NFTs owned by an account (xrpldata.com returns all in one call)
+ * Get all NFTs with pagination support
  * @param {string} address - XRPL account address
- * @param {number} maxNFTs - Maximum number of NFTs to return
+ * @param {number} maxNFTs - Maximum number of NFTs to fetch
  * @returns {Promise<Array>} Array of all NFTs
  */
 export const getAllAccountNFTs = async (address, maxNFTs = 400) => {
-  try {
-    const result = await getAccountNFTs(address);
-    const nfts = result.account_nfts || [];
-    
-    console.log(`✅ Total NFTs fetched: ${nfts.length}`);
-    
-    // Return up to maxNFTs
-    return nfts.slice(0, maxNFTs);
-  } catch (error) {
-    console.error('❌ Error fetching all account NFTs:', error);
-    throw error;
+  let allNFTs = [];
+  let marker = undefined;
+  let hasMore = true;
+
+  while (hasMore && allNFTs.length < maxNFTs) {
+    try {
+      const result = await getAccountNFTs(address, { limit: 400, marker });
+      
+      if (result.account_nfts && result.account_nfts.length > 0) {
+        allNFTs = allNFTs.concat(result.account_nfts);
+      }
+
+      if (result.marker && allNFTs.length < maxNFTs) {
+        marker = result.marker;
+      } else {
+        hasMore = false;
+      }
+    } catch (error) {
+      console.error('Error in pagination:', error);
+      hasMore = false;
+    }
   }
+
+  return allNFTs.slice(0, maxNFTs);
 };
 
 /**
- * Get sell offers for a specific NFT (includes transfers with amount 0) using xrpldata.com
+ * Get sell offers for a specific NFT (includes transfers with amount 0)
  * @param {string} nftokenID - NFT Token ID
  * @returns {Promise<Object>} Sell offers data
  */
 export const getNFTSellOffers = async (nftokenID) => {
   try {
-    const url = `${XRPLDATA_API_BASE}/xls20-nfts/offers/nft/${nftokenID}`;
-    
-    const response = await axios.get(url, {
-      headers: {
-        'Content-Type': 'application/json'
-      }
+    const result = await callDhaliAPI('nft_sell_offers', {
+      nft_id: nftokenID,
+      ledger_index: 'validated'
     });
-
-    // xrpldata.com returns all offers for NFT, filter for sell offers (Flags & 1 === 1)
-    const allOffers = Array.isArray(response.data) ? response.data : [];
-    const sellOffers = allOffers.filter(offer => (offer.Flags & 1) === 1);
     
-    console.log(`✅ Fetched ${sellOffers.length} sell offers for NFT ${nftokenID}`);
+    // Ensure offers array exists
+    if (result && !result.offers) {
+      result.offers = [];
+    }
     
-    return {
-      offers: sellOffers,
-      nft_id: nftokenID
-    };
+    return result;
   } catch (error) {
     // NFT might not have any sell offers
-    if (error.response?.status === 404) {
-      console.log(`ℹ️ No sell offers found for ${nftokenID}`);
+    if (error.message?.includes('objectNotFound') || error.message?.includes('not found')) {
       return { offers: [] };
     }
     console.error(`❌ Error getting sell offers for ${nftokenID}:`, error);
@@ -177,34 +172,26 @@ export const getNFTSellOffers = async (nftokenID) => {
 };
 
 /**
- * Get buy offers for a specific NFT (includes transfers with amount 0) using xrpldata.com
+ * Get buy offers for a specific NFT (includes transfers with amount 0)
  * @param {string} nftokenID - NFT Token ID
  * @returns {Promise<Object>} Buy offers data
  */
 export const getNFTBuyOffers = async (nftokenID) => {
   try {
-    const url = `${XRPLDATA_API_BASE}/xls20-nfts/offers/nft/${nftokenID}`;
-    
-    const response = await axios.get(url, {
-      headers: {
-        'Content-Type': 'application/json'
-      }
+    const result = await callDhaliAPI('nft_buy_offers', {
+      nft_id: nftokenID,
+      ledger_index: 'validated'
     });
-
-    // xrpldata.com returns all offers for NFT, filter for buy offers (Flags & 1 === 0)
-    const allOffers = Array.isArray(response.data) ? response.data : [];
-    const buyOffers = allOffers.filter(offer => (offer.Flags & 1) === 0);
     
-    console.log(`✅ Fetched ${buyOffers.length} buy offers for NFT ${nftokenID}`);
+    // Ensure offers array exists
+    if (result && !result.offers) {
+      result.offers = [];
+    }
     
-    return {
-      offers: buyOffers,
-      nft_id: nftokenID
-    };
+    return result;
   } catch (error) {
     // NFT might not have any buy offers
-    if (error.response?.status === 404) {
-      console.log(`ℹ️ No buy offers found for ${nftokenID}`);
+    if (error.message?.includes('objectNotFound') || error.message?.includes('not found')) {
       return { offers: [] };
     }
     console.error(`❌ Error getting buy offers for ${nftokenID}:`, error);
@@ -272,33 +259,39 @@ export const getAccountObjects = async (address, options = {}) => {
 };
 
 /**
- * Get all NFT offers created by an account using xrpldata.com
+ * Get all NFT offers created by an account (with pagination)
  * @param {string} address - XRPL account address
  * @returns {Promise<Array>} Array of NFT offer objects
  */
 export const getAccountNFTOffers = async (address) => {
-  try {
-    const url = `${XRPLDATA_API_BASE}/xls20-nfts/offers/offerowner/${address}`;
-    
-    const response = await axios.get(url, {
-      headers: {
-        'Content-Type': 'application/json'
-      }
-    });
+  let allOffers = [];
+  let marker = undefined;
+  let hasMore = true;
 
-    const offers = Array.isArray(response.data) ? response.data : [];
-    
-    console.log(`✅ Fetched ${offers.length} NFT offers created by ${address}`);
-    
-    return offers;
-  } catch (error) {
-    if (error.response?.status === 404) {
-      console.log(`ℹ️ No NFT offers found for ${address}`);
-      return [];
+  while (hasMore) {
+    try {
+      const result = await getAccountObjects(address, { 
+        type: 'nft_offer',
+        limit: 400, 
+        marker 
+      });
+
+      if (result.account_objects && result.account_objects.length > 0) {
+        allOffers = allOffers.concat(result.account_objects);
+      }
+
+      if (result.marker) {
+        marker = result.marker;
+      } else {
+        hasMore = false;
+      }
+    } catch (error) {
+      console.error('Error in offer pagination:', error);
+      hasMore = false;
     }
-    console.error('❌ Error in offer fetching:', error);
-    throw error;
   }
+
+  return allOffers;
 };
 
 /**
