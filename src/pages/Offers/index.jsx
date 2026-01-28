@@ -70,6 +70,26 @@ const Offers = ({
     a && a.length >= 10 ? `${a.slice(0, 6)}…${a.slice(-4)}` : a || "";
   const resolveName = (addr) => addressToName.get(addr) || shortAddr(addr) || "Unknown";
 
+  // Helper function to safely check if amount is a transfer (0)
+  const isTransferAmount = (amount) => {
+    if (amount === "0" || amount === 0) return true;
+    if (amount === null || amount === undefined || amount === '') return true;
+    try {
+      return parseFloat(String(amount)) === 0;
+    } catch {
+      return false;
+    }
+  };
+
+  // Validate offer structure
+  const isValidOffer = (offer) => {
+    return offer && 
+           typeof offer === 'object' &&
+           (offer.offerIndex || offer.index) &&
+           (offer.nftokenID || offer.NFTokenID) &&
+           (offer.account || offer.owner || offer.Owner);
+  };
+
   useEffect(() => {
     console.log("Offers->useEffect->incoming offer", incomingOffer);
     if (incomingOffer) {
@@ -320,36 +340,60 @@ const Offers = ({
       const data = await getAllNFTOffers(myWalletAddress);
       console.log("✅ NFT offers data from Dhali:", data);
 
+      // Validate data structure
+      if (!data || typeof data !== 'object') {
+        console.error("❌ Invalid data structure from getAllNFTOffers");
+        setMadeOffers([]);
+        setReceivedOffers([]);
+        return;
+      }
+
       const brokerWalletAddress = API_URLS.brokerWalletAddress?.trim();
       console.log("🏦 Broker wallet address:", brokerWalletAddress);
 
       const isRelevantOffer = (offer) => {
-        if (!offer.destination || offer.amount === "0") {
-          console.log("✅ Direct transfer offer:", offer.offerIndex);
+        // Validate offer first
+        if (!offer || !isValidOffer(offer)) {
+          console.log("⚠️ Invalid offer structure, skipping:", offer);
+          return false;
+        }
+
+        const destination = offer.destination || offer.Destination;
+        const amount = offer.amount || offer.Amount;
+        const account = offer.account || offer.owner || offer.Owner;
+
+        // Check if it's a transfer (no payment required)
+        if (!destination || isTransferAmount(amount)) {
+          console.log("✅ Direct transfer offer:", offer.offerIndex, { amount, destination });
           return true;
         }
+        
+        // Check if broker is involved
         if (
           brokerWalletAddress &&
-          (offer.destination === brokerWalletAddress ||
-            offer.account === brokerWalletAddress)
+          (destination === brokerWalletAddress ||
+            account === brokerWalletAddress)
         ) {
           console.log("✅ Broker-involved offer:", offer.offerIndex);
           return true;
         }
+        
+        // Check if it's for me
         if (
-          offer.destination === myWalletAddress ||
-          offer.account === myWalletAddress
+          destination === myWalletAddress ||
+          account === myWalletAddress
         ) {
-          console.log("✅ Direct offer (no broker)::", offer.offerIndex);
+          console.log("✅ Direct offer (no broker):", offer.offerIndex);
           return true;
         }
+        
         console.log(
           "❌ Filtered out brokered offer by another marketplace:",
           offer.offerIndex,
           {
-            destination: offer.destination,
-            account: offer.account,
-            amount: offer.amount,
+            destination: destination,
+            account: account,
+            amount: amount,
           }
         );
         return false;
@@ -358,18 +402,35 @@ const Offers = ({
       const nftMapById = new Map();
       const walletNftMap = {};
 
-      myNftData.forEach((member) => {
-        member.groupedNfts?.forEach((group) => {
-          group.nfts?.forEach((nft) => {
-            nftMapById.set(nft.nftokenID, { ...nft });
-          });
+      // Build NFT maps with null safety
+      if (Array.isArray(myNftData)) {
+        myNftData.forEach((member) => {
+          if (!member || typeof member !== 'object') return;
+          
+          if (Array.isArray(member.groupedNfts)) {
+            member.groupedNfts.forEach((group) => {
+              if (!group || !Array.isArray(group.nfts)) return;
+              
+              group.nfts.forEach((nft) => {
+                // Use both variants of NFT ID
+                const nftId = nft.nftokenID || nft.NFTokenID;
+                if (nftId) {
+                  nftMapById.set(nftId, { ...nft });
+                }
+              });
+            });
+          }
+          
+          const wallet = member.walletAddress?.trim();
+          if (wallet) {
+            const nftIds = member.groupedNfts?.flatMap((group) => {
+              if (!group || !Array.isArray(group.nfts)) return [];
+              return group.nfts.map((nft) => nft.nftokenID || nft.NFTokenID).filter(Boolean);
+            }) || [];
+            walletNftMap[wallet] = new Set(nftIds);
+          }
         });
-        const wallet = member.walletAddress;
-        const nftIds = member.groupedNfts?.flatMap((group) =>
-          group.nfts?.map((nft) => nft.nftokenID) || []
-        ) || [];
-        walletNftMap[wallet] = new Set(nftIds);
-      });
+      }
 
       console.log("📋 Wallet NFT Map:", walletNftMap);
       console.log("📋 My wallet NFTs count:", walletNftMap[myWalletAddress]?.size || 0);
@@ -377,8 +438,8 @@ const Offers = ({
       const madeOffers_ = [];
       const receivedOffers_ = [];
 
-      // User-created (made) offers
-      if (data.userCreatedOffers && data.userCreatedOffers.length > 0) {
+      // User-created (made) offers - with null safety
+      if (data?.userCreatedOffers && Array.isArray(data.userCreatedOffers) && data.userCreatedOffers.length > 0) {
         console.log(
           `📤 Processing ${data.userCreatedOffers.length} user created offers...`
         );
@@ -426,7 +487,7 @@ const Offers = ({
       }
 
       // Counter offers (on NFTs you own) - BUY OFFERS from others on your NFTs
-      if (data.counterOffers && data.counterOffers.length > 0) {
+      if (data?.counterOffers && Array.isArray(data.counterOffers) && data.counterOffers.length > 0) {
         console.log(
           `📥 Processing ${data.counterOffers.length} counter offers...`
         );
@@ -490,7 +551,7 @@ const Offers = ({
       }
 
       // Private offers (destination = you)
-      if (data.privateOffers && data.privateOffers.length > 0) {
+      if (data?.privateOffers && Array.isArray(data.privateOffers) && data.privateOffers.length > 0) {
         console.log(
           `🔒 Processing ${data.privateOffers.length} private offers...`
         );

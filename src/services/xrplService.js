@@ -110,27 +110,60 @@ export const getWalletOffers = async (walletAddress) => {
  * @returns {Object} Bithomp-compatible offer
  */
 const transformOfferToBithompFormat = (offer, nftMetadata = null, type = 'sell') => {
-    // Parse Flags to determine offer type
-    const isSellToken = (offer.Flags & 0x00000001) !== 0; // lsfSellNFToken flag
-    
-    // Normalize amount: Dhali returns Amount field from XRPL
-    // For transfers (no payment), Amount is "0" or might be missing
-    let normalizedAmount = "0";
-    if (offer.Amount !== undefined && offer.Amount !== null) {
-        normalizedAmount = typeof offer.Amount === 'string' ? offer.Amount : String(offer.Amount);
+    // Validate offer object
+    if (!offer || typeof offer !== 'object') {
+        console.warn('⚠️ Invalid offer object passed to transformOfferToBithompFormat');
+        return null;
     }
     
+    // Parse Flags to determine offer type - with null safety
+    const isSellToken = (offer.Flags && (offer.Flags & 0x00000001) !== 0) || false; // lsfSellNFToken flag
+    
+    // Normalize amount: Dhali returns Amount field from XRPL
+    // Try multiple field names for compatibility
+    let normalizedAmount = "0";
+    const amountValue = offer.Amount !== undefined ? offer.Amount : (offer.amount !== undefined ? offer.amount : "0");
+    if (amountValue !== null && amountValue !== undefined && amountValue !== '') {
+        try {
+            normalizedAmount = typeof amountValue === 'string' ? amountValue : String(amountValue);
+        } catch (e) {
+            console.warn('⚠️ Error normalizing amount:', e);
+            normalizedAmount = "0";
+        }
+    }
+    
+    // Get NFT ID - handle both capital and lowercase variants
+    const nftTokenID = offer.NFTokenID || offer.nftokenID || offer.nft_token_id;
+    if (!nftTokenID) {
+        console.warn('⚠️ No NFToken ID found in offer object:', offer);
+    }
+    
+    // Get offer index - handle multiple possible field names
+    const offerId = offer.index || offer.nft_offer_index || offer.offerIndex || offer.offer_index;
+    if (!offerId) {
+        console.warn('⚠️ No offer index found in offer object:', offer);
+    }
+    
+    // Get owner/account - handle both variants
+    const ownerAddress = offer.Owner || offer.owner || offer.account || offer.Account;
+    
+    // Get destination - handle null/undefined
+    const destination = offer.Destination || offer.destination || null;
+    
+    // Get expiration
+    const expiration = offer.Expiration || offer.expiration || null;
+    
     return {
-        offerIndex: offer.index || offer.nft_offer_index,
+        offerIndex: offerId,
         amount: normalizedAmount,
         flags: {
             sellToken: isSellToken
         },
-        owner: offer.Owner,
-        account: offer.Owner, // for backward compatibility with UI expectations
-        destination: offer.Destination || null,
-        expiration: offer.Expiration || null,
-        nftokenID: offer.NFTokenID,
+        owner: ownerAddress,
+        account: ownerAddress, // for backward compatibility with UI expectations
+        destination: destination,
+        expiration: expiration,
+        nftokenID: nftTokenID,
         valid: true, // Dhali returns only valid on-ledger offers
         nftoken: nftMetadata ? {
             nftokenID: nftMetadata.nftokenID,
