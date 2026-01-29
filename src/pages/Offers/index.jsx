@@ -335,10 +335,16 @@ const Offers = ({
 
   const fetchAllUsersOfers = async () => {
     try {
-      console.log("🔍 Fetching NFT offers from Dhali for:", myWalletAddress);
+      console.log("🔍 Fetching NFT offers from xrpldata for:", myWalletAddress);
 
       const data = await getAllNFTOffers(myWalletAddress);
-      console.log("✅ NFT offers data from Dhali:", data);
+      console.log("✅ NFT offers data from xrpldata:", data);
+      console.log("📊 Offer Summary:", {
+        userCreated: data.summary?.totalUserCreated || 0,
+        counterOffers: data.summary?.totalCounterOffers || 0,
+        destinationOffers: data.summary?.totalDestinationOffers || 0,
+        total: data.summary?.totalOffers || 0
+      });
 
       // Validate data structure
       if (!data || typeof data !== 'object') {
@@ -562,8 +568,15 @@ const Offers = ({
       // Private offers (destination = you)
       if (data?.privateOffers && Array.isArray(data.privateOffers) && data.privateOffers.length > 0) {
         console.log(
-          `🔒 Processing ${data.privateOffers.length} private offers...`
+          `🔒 Processing ${data.privateOffers.length} destination offers (where you are destination)...`
         );
+
+        // Count transfer offers (Amount = 0)
+        const transferCount = data.privateOffers.filter(offer => 
+          isTransferAmount(offer.Amount || offer.amount)
+        ).length;
+        console.log(`   📨 ${transferCount} transfer offers (Amount=0)`);
+        console.log(`   💰 ${data.privateOffers.length - transferCount} paid offers`);
 
         data.privateOffers
           .filter(isRelevantOffer)
@@ -571,10 +584,20 @@ const Offers = ({
             const nftId = offer.NFTokenID || offer.nftokenID;
             const ownerAccount = offer.Owner || offer.account;
             const destination = offer.Destination || offer.destination;
+            const amount = offer.Amount || offer.amount;
             const nftData =
               offer.nftoken || nftMapById.get(nftId);
 
+            // All offers from this endpoint should have destination = myWalletAddress
+            // But we double-check for safety
             if (destination === myWalletAddress) {
+              console.log(`✅ Adding destination offer to receivedOffers:`, {
+                offerId: offer.OfferID || offer.offerIndex,
+                amount: amount,
+                isTransfer: isTransferAmount(amount),
+                from: ownerAccount
+              });
+              
               receivedOffers_.push({
                 offer: {
                   offerId: offer.OfferID || offer.offerIndex,
@@ -616,7 +639,12 @@ const Offers = ({
 
       console.log("📤 Made offers (after filtering):", madeOffers_);
       console.log("📥 Received offers (after filtering):", receivedOffers_);
-      console.log("📊 Summary:", data.summary);
+      console.log("📊 Summary:", {
+        ...data.summary,
+        madeOffersDisplayed: madeOffers_.length,
+        receivedOffersDisplayed: receivedOffers_.length,
+        transferOffers: receivedOffers_.filter(o => isTransferAmount(o.offer.amount)).length
+      });
 
       setMadeOffers(madeOffers_);
       setReceivedOffers(receivedOffers_);

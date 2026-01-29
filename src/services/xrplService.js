@@ -176,35 +176,38 @@ export const getAllNFTOffers = async (address) => {
             counterOffers = await getNFTOffers(address, {
                 list: 'counterOffers'
             });
-            console.log('✅ Counter Offers:', counterOffers);
+            console.log('✅ Counter Offers (on NFTs you own):', counterOffers);
         } catch (error) {
             console.warn('⚠️ Error fetching counter offers:', error.message);
         }
 
-        // Fetch privately offered to address (transfers, private offers)
-        let privateOffers = { nftOffers: [] };
+        // Fetch destination offers (offers where you are the destination)
+        let destinationOffers = { nftOffers: [] };
         try {
-            privateOffers = await getNFTOffers(address, {
+            destinationOffers = await getNFTOffers(address, {
                 list: 'privatelyOfferedToAddress'
             });
-            console.log('✅ Private Offers:', privateOffers);
+            console.log('✅ Destination Offers (where you are destination):', destinationOffers);
+            console.log(`   📬 Found ${destinationOffers.nftOffers?.length || 0} offers with destination = ${address}`);
         } catch (error) {
-            console.warn('⚠️ Error fetching private offers:', error.message);
+            console.warn('⚠️ Error fetching destination offers:', error.message);
         }
 
         const userCreatedList = userCreatedOffers.nftOffers || [];
         const counterOffersList = counterOffers.nftOffers || [];
-        const privateOffersList = privateOffers.nftOffers || [];
+        const destinationOffersList = destinationOffers.nftOffers || [];
 
         return {
             userCreatedOffers: userCreatedList,
             counterOffers: counterOffersList,
-            privateOffers: privateOffersList,
+            destinationOffers: destinationOffersList,
+            privateOffers: destinationOffersList, // Alias for backward compatibility
             summary: {
                 totalUserCreated: userCreatedList.length,
                 totalCounterOffers: counterOffersList.length,
-                totalPrivateOffers: privateOffersList.length,
-                totalOffers: userCreatedList.length + counterOffersList.length + privateOffersList.length
+                totalDestinationOffers: destinationOffersList.length,
+                totalPrivateOffers: destinationOffersList.length, // Alias for backward compatibility
+                totalOffers: userCreatedList.length + counterOffersList.length + destinationOffersList.length
             },
             owner: address,
             ownerDetails: null
