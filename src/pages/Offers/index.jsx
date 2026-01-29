@@ -415,41 +415,41 @@ const Offers = ({
       const madeOffers_ = [];
       const receivedOffers_ = [];
 
-      // STEP 5: Process user-created offers
-      if (data.userCreatedOffers && data.userCreatedOffers.length > 0) {
-        console.log(
-          `📤 Processing ${data.userCreatedOffers.length} user created offers...`
-        );
+      // // STEP 5: Process user-created offers
+      // if (data.userCreatedOffers && data.userCreatedOffers.length > 0) {
+      //   console.log(
+      //     `📤 Processing ${data.userCreatedOffers.length} user created offers...`
+      //   );
 
-        data.userCreatedOffers
-          .filter(isRelevantOffer)
-          .forEach((offer) => {
-            const offerWithMetadata = attachNFTMetadata(offer);
-            const nftData = offerWithMetadata.nftoken;
+      //   data.userCreatedOffers
+      //     .filter(isRelevantOffer)
+      //     .forEach((offer) => {
+      //       const offerWithMetadata = attachNFTMetadata(offer);
+      //       const nftData = offerWithMetadata.nftoken;
 
-            madeOffers_.push({
-              offer: {
-                offerId: offer.offerIndex,
-                amount: offer.amount,
-                offerOwner: offer.account,
-                offerOwnerName: resolveName(offer.account),
-                nftId: offer.nftokenID,
-                isSell: offer.flags?.sellToken || false,
-                destination: offer.destination,
-                valid: offer.valid,
-                validationErrors: offer.validationErrors,
-                createdAt: offer.createdAt,
-                expiration: offer.expiration,
-              },
-              nft: {
-                nftokenID: offer.nftokenID,
-                metadata: nftData.metadata,
-                imageURI: nftData.assets?.preview || nftData.metadata?.image,
-                name: nftData.metadata?.name,
-              }
-            });
-          });
-      }
+      //       madeOffers_.push({
+      //         offer: {
+      //           offerId: offer.offerIndex,
+      //           amount: offer.amount,
+      //           offerOwner: offer.account,
+      //           offerOwnerName: resolveName(offer.account),
+      //           nftId: offer.nftokenID,
+      //           isSell: offer.flags?.sellToken || false,
+      //           destination: offer.destination,
+      //           valid: offer.valid,
+      //           validationErrors: offer.validationErrors,
+      //           createdAt: offer.createdAt,
+      //           expiration: offer.expiration,
+      //         },
+      //         nft: {
+      //           nftokenID: offer.nftokenID,
+      //           metadata: nftData.metadata,
+      //           imageURI: nftData.assets?.preview || nftData.metadata?.image,
+      //           name: nftData.metadata?.name,
+      //         }
+      //       });
+      //     });
+      // }
 
       // STEP 6: Process counter offers (offers on user's NFTs)
       if (data.counterOffers && data.counterOffers.length > 0) {
