@@ -427,3 +427,136 @@ export const getOffersByAmountRange = (offers, minAmount, maxAmount) => {
 export const dropsToXrp = (drops) => {
     return parseInt(drops) / 1000000;
 };
+
+/**
+ * Helper: Convert hex URI to string and fetch metadata
+ * @param {string} uri - Hex-encoded URI
+ * @returns {Promise<Object>} NFT metadata
+ */
+const fetchNFTMetadata = async (uri) => {
+    try {
+        if (!uri) return null;
+
+        // Convert hex to string
+        const hexString = uri.startsWith('0x') ? uri.slice(2) : uri;
+        let decodedUri = '';
+
+        for (let i = 0; i < hexString.length; i += 2) {
+            decodedUri += String.fromCharCode(parseInt(hexString.substring(i, i + 2), 16));
+        }
+
+        // Handle IPFS URIs
+        if (decodedUri.startsWith('ipfs://')) {
+            decodedUri = decodedUri.replace('ipfs://', 'https://ipfs.io/ipfs/');
+        }
+
+        console.log('📥 Fetching metadata from:', decodedUri);
+
+        const response = await fetch(decodedUri, {
+            method: 'GET',
+            headers: { 'Content-Type': 'application/json' },
+        });
+
+        if (!response.ok) {
+            console.warn(`Failed to fetch metadata from ${decodedUri}`);
+            return null;
+        }
+
+        const metadata = await response.json();
+        return metadata;
+    } catch (error) {
+        console.error('Error fetching NFT metadata:', error);
+        return null;
+    }
+};
+
+/**
+ * Fetch all NFTs owned by an address using native XRPL
+ * @param {string} walletAddress - The XRPL wallet address
+ * @returns {Promise<Object>} NFTs grouped by collection
+ */
+export const getNFTsByOwner = async (walletAddress) => {
+    try {
+        console.log('🔍 Fetching NFTs from XRPL for:', walletAddress);
+
+        const client = new Client(XRPL_NODE);
+        await client.connect();
+
+        // Fetch all NFTs for this account
+        const response = await client.request({
+            command: 'account_nfts',
+            account: walletAddress,
+            limit: 400
+        });
+
+        await client.disconnect();
+
+        const nfts = response.result.account_nfts || [];
+        console.log(`✅ Found ${nfts.length} NFTs for ${walletAddress}`);
+
+        if (nfts.length === 0) {
+            return { collections: [], nftsByKey: {} };
+        }
+
+        // Process NFTs and fetch metadata
+        const processedNFTs = await Promise.all(
+            nfts.map(async (nft) => {
+                const metadata = await fetchNFTMetadata(nft.URI);
+
+                const imageURI = metadata?.image || metadata?.imageUrl || null;
+                const collectionName =
+                    metadata?.collection?.name ||
+                    metadata?.name ||
+                    `Collection ${nft.NFTokenTaxon}`;
+
+                return {
+                    nftokenID: nft.NFTokenID,
+                    issuer: nft.Issuer,
+                    nftokenTaxon: nft.NFTokenTaxon,
+                    uri: nft.URI,
+                    flags: nft.Flags,
+                    transferFee: nft.TransferFee,
+                    metadata: metadata || { name: 'Unknown NFT' },
+                    imageURI,
+                    collectionName,
+                    // Bithomp-compatible fields
+                    assets: {
+                        image: imageURI
+                    }
+                };
+            })
+        );
+
+        // Group by collection key (issuer-taxon)
+        const nftsByKey = processedNFTs.reduce((acc, nft) => {
+            const key = `${nft.issuer}-${nft.nftokenTaxon}`;
+            if (!acc[key]) acc[key] = [];
+            acc[key].push(nft);
+            return acc;
+        }, {});
+
+        // Build collection summaries
+        const collections = Object.entries(nftsByKey).map(([collectionKey, list]) => {
+            const sample = list.find((n) => n.imageURI) || list[0];
+            const name = sample?.collectionName || `Collection ${sample?.nftokenTaxon ?? 'Unknown'}`;
+            const sampleImage = sample?.imageURI || null;
+
+            return {
+                name,
+                issuer: sample.issuer,
+                nftokenTaxon: sample.nftokenTaxon,
+                collectionKey,
+                nftCount: list.length,
+                sampleNft: sample,
+                sampleImage,
+            };
+        });
+
+        console.log(`📦 Grouped into ${collections.length} collections`);
+
+        return { collections, nftsByKey };
+    } catch (error) {
+        console.error('❌ Error fetching NFTs from XRPL:', error);
+        return { collections: [], nftsByKey: {} };
+    }
+};
