@@ -442,8 +442,10 @@ const Offers = ({
 
       const madeOffers_ = [];
       const receivedOffers_ = [];
+      const incomingTransfers_ = [];
+      const outgoingTransfers_ = [];
 
-      // User-created (made) offers - with null safety
+      // User-created (made) offers - separate into transfers and paid offers
       if (data?.userCreatedOffers && Array.isArray(data.userCreatedOffers) && data.userCreatedOffers.length > 0) {
         console.log(
           `📤 Processing ${data.userCreatedOffers.length} user created offers...`
@@ -456,10 +458,12 @@ const Offers = ({
             const nftData =
               offer.nftoken || nftMapById.get(nftId);
             const ownerAccount = offer.Owner || offer.account;
-            madeOffers_.push({
+            const amount = offer.Amount || offer.amount;
+            
+            const offerObj = {
               offer: {
                 offerId: offer.OfferID || offer.offerIndex,
-                amount: offer.Amount || offer.amount,
+                amount: amount,
                 offerOwner: ownerAccount,
                 offerOwnerName: resolveName(ownerAccount),
                 nftId: nftId,
@@ -489,14 +493,23 @@ const Offers = ({
                       offer.nftoken?.metadata?.name,
                   }
                 : null,
-            });
+            };
+
+            // Check if it's a transfer (amount = 0) or paid offer
+            if (isTransferAmount(amount)) {
+              console.log("📨 Outgoing transfer (you created, amount=0)");
+              outgoingTransfers_.push(offerObj);
+            } else {
+              console.log("💰 Paid offer (you created, amount>0)");
+              madeOffers_.push(offerObj);
+            }
           });
       }
 
-      // Counter offers (on NFTs you own) - Offers from others on your NFTs
+      // Counter offers (on NFTs you own) - All go to received offers
       if (data?.counterOffers && Array.isArray(data.counterOffers) && data.counterOffers.length > 0) {
         console.log(
-          `📥 Processing ${data.counterOffers.length} counter offers (on NFTs you own)...`
+          `📥 Processing ${data.counterOffers.length} offers on NFTs you own...`
         );
 
         data.counterOffers
@@ -504,23 +517,16 @@ const Offers = ({
           .forEach((offer) => {
             const nftId = offer.NFTokenID || offer.nftokenID;
             const ownerAccount = offer.Owner || offer.account;
-            console.log("🔍 Counter offer:", {
-              offerIndex: offer.OfferID || offer.offerIndex,
-              nftokenID: nftId,
-              account: ownerAccount,
-              amount: offer.Amount || offer.amount,
-              flags: offer.Flags || offer.flags,
-              nftOwner: offer.NFTokenOwner
-            });
+            const amount = offer.Amount || offer.amount;
 
             const nftData = offer.nftoken || nftMapById.get(nftId);
 
-            // These are always for NFTs you own (from offers_for_own_nfts)
-            console.log("✅ Counter offer on your NFT, adding to receivedOffers");
+            // All offers on NFTs you own go to "receivedOffers"
+            console.log("✅ Offer on your NFT → receivedOffers (amount:", amount, ")");
             receivedOffers_.push({
               offer: {
                 offerId: offer.OfferID || offer.offerIndex,
-                amount: offer.Amount || offer.amount,
+                amount: amount,
                 offerOwner: ownerAccount,
                 offerOwnerName: resolveName(ownerAccount),
                 nftId: nftId,
@@ -555,18 +561,11 @@ const Offers = ({
           });
       }
 
-      // Destination offers (where you are the destination)
+      // Destination offers (where you are the destination) - separate into transfers and paid offers
       if (data?.destinationOffers && Array.isArray(data.destinationOffers) && data.destinationOffers.length > 0) {
         console.log(
-          `🔒 Processing ${data.destinationOffers.length} destination offers (where you are destination)...`
+          `🔒 Processing ${data.destinationOffers.length} destination offers...`
         );
-
-        // Count transfer offers (Amount = 0)
-        const transferCount = data.destinationOffers.filter(offer => 
-          isTransferAmount(offer.Amount || offer.amount)
-        ).length;
-        console.log(`   📨 ${transferCount} transfer offers (Amount=0)`);
-        console.log(`   💰 ${data.destinationOffers.length - transferCount} paid offers`);
 
         data.destinationOffers
           .filter(isRelevantOffer)
@@ -578,55 +577,60 @@ const Offers = ({
             const nftData =
               offer.nftoken || nftMapById.get(nftId);
 
-            console.log(`✅ Adding destination offer to receivedOffers:`, {
-              offerId: offer.OfferID || offer.offerIndex,
-              amount: amount,
-              isTransfer: isTransferAmount(amount),
-              from: ownerAccount
-            });
-            
-            receivedOffers_.push({
-                offer: {
-                  offerId: offer.OfferID || offer.offerIndex,
-                  amount: offer.Amount || offer.amount,
-                  offerOwner: ownerAccount,
-                  offerOwnerName: resolveName(ownerAccount),
-                  nftId: nftId,
-                  isSell: typeof offer.Flags === 'number' ? (offer.Flags & 1) === 1 : (offer.flags?.sellToken || false),
-                  destination: destination,
-                  valid: offer.valid,
-                  validationErrors: offer.validationErrors,
-                  createdAt: offer.createdAt,
-                  expiration: offer.Expiration || offer.expiration,
-                },
-                nft: nftData
-                  ? {
-                      ...nftData,
-                      nftokenID: nftId,
-                      metadata:
-                        nftData.metadata || offer.nftoken?.metadata,
-                      imageURI:
-                        nftData?.imageURI || 
-                        nftData?.assets?.preview ||
-                        nftData?.assets?.image ||
-                        offer.nftoken?.imageURI ||
-                        offer.nftoken?.assets?.preview ||
-                        offer.nftoken?.metadata?.image,
-                      name:
-                        nftData.name || 
-                        nftData.metadata?.name ||
-                        offer.nftoken?.name ||
-                        offer.nftoken?.metadata?.name,
-                    }
-                  : null,
-              });
+            const offerObj = {
+              offer: {
+                offerId: offer.OfferID || offer.offerIndex,
+                amount: amount,
+                offerOwner: ownerAccount,
+                offerOwnerName: resolveName(ownerAccount),
+                nftId: nftId,
+                isSell: typeof offer.Flags === 'number' ? (offer.Flags & 1) === 1 : (offer.flags?.sellToken || false),
+                destination: destination,
+                valid: offer.valid,
+                validationErrors: offer.validationErrors,
+                createdAt: offer.createdAt,
+                expiration: offer.Expiration || offer.expiration,
+              },
+              nft: nftData
+                ? {
+                    ...nftData,
+                    nftokenID: nftId,
+                    metadata:
+                      nftData.metadata || offer.nftoken?.metadata,
+                    imageURI:
+                      nftData?.imageURI || 
+                      nftData?.assets?.preview ||
+                      nftData?.assets?.image ||
+                      offer.nftoken?.imageURI ||
+                      offer.nftoken?.assets?.preview ||
+                      offer.nftoken?.metadata?.image,
+                    name:
+                      nftData.name || 
+                      nftData.metadata?.name ||
+                      offer.nftoken?.name ||
+                      offer.nftoken?.metadata?.name,
+                  }
+                : null,
+            };
+
+            // Check if it's a transfer (amount = 0) or paid offer
+            if (isTransferAmount(amount)) {
+              console.log("📨 Incoming transfer (destination=you, amount=0)");
+              incomingTransfers_.push(offerObj);
+            } else {
+              console.log("💰 Paid offer (destination=you, amount>0)");
+              receivedOffers_.push(offerObj);
+            }
           });
       }
 
-      console.log("📤 Made offers (after filtering):", madeOffers_);
-      console.log("📥 Received offers (after filtering):", receivedOffers_);
-      console.log("📊 Summary:", data.summary);
+      console.log("📊 Final categorization:");
+      console.log("  📨 Incoming Transfers:", incomingTransfers_.length);
+      console.log("  📤 Outgoing Transfers:", outgoingTransfers_.length);
+      console.log("  📥 Offers Received:", receivedOffers_.length);
+      console.log("  💼 Offers Made:", madeOffers_.length);
 
+      setIncomingTransferOffers(incomingTransfers_);
       setMadeOffers(madeOffers_);
       setReceivedOffers(receivedOffers_);
     } catch (error) {
