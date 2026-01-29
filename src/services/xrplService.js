@@ -5,7 +5,7 @@ import API_URLS from '../config.js';
 
 const XRPL_NODE = 'wss://s.altnet.rippletest.net:51233'; // Using testnet, change to mainnet for production
 const BITHOMP_API_BASE = 'https://bithomp.com/api/v2';
-const XRPLDATA_API_BASE = 'https://api.xrpldata.com';
+const XRPLDATA_API_BASE = 'https://api.xrpldata.com/api/v1';
 
 const isValidAmount = (amount) => {
     if (!amount) return false;
