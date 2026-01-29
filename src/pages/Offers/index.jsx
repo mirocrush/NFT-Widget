@@ -463,7 +463,9 @@ const Offers = ({
             const offerWithMetadata = attachNFTMetadata(offer);
             const nftData = offerWithMetadata.nftoken;
 
-            if (walletNftMap[myWalletAddress]?.has(offer.nftokenID)) {
+            // Only include offers created by OTHERS on user's NFTs
+            if (walletNftMap[myWalletAddress]?.has(offer.nftokenID) &&
+                offer.account !== myWalletAddress) {
               receivedOffers_.push({
                 offer: {
                   offerId: offer.offerIndex,
@@ -501,7 +503,9 @@ const Offers = ({
             const offerWithMetadata = attachNFTMetadata(offer);
             const nftData = offerWithMetadata.nftoken;
 
-            if (offer.destination === myWalletAddress) {
+            // Only include offers created by OTHERS with destination = user
+            if (offer.destination === myWalletAddress &&
+                offer.account !== myWalletAddress) {
               receivedOffers_.push({
                 offer: {
                   offerId: offer.offerIndex,
