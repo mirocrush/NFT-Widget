@@ -620,7 +620,6 @@ const Offers = ({
                     }
                   : null,
               });
-            }
           });
       }
 
