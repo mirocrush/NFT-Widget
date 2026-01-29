@@ -1,10 +1,9 @@
 import {
     Client
 } from 'xrpl';
-import API_URLS from '../config.js';
 
 const XRPL_NODE = 'wss://s.altnet.rippletest.net:51233'; // Using testnet, change to mainnet for production
-const BITHOMP_API_BASE = 'https://bithomp.com/api/v2';
+const XRPLDATA_API_BASE = 'https://api.xrpldata.com/api/v1';
 
 const isValidAmount = (amount) => {
     if (!amount) return false;
@@ -96,7 +95,7 @@ export const getWalletOffers = async (walletAddress) => {
 };
 
 /**
- * Fetch NFT offers for a given address from Bithomp API
+ * Fetch NFT offers for a given address from xrpldata.com API
  * @param {string} address - The XRPL address
  * @param {Object} options - Additional options for the API call
  * @returns {Promise<Object>} NFT offers data
@@ -104,46 +103,51 @@ export const getWalletOffers = async (walletAddress) => {
 export const getNFTOffers = async (address, options = {}) => {
     try {
         const {
-            list = null, // null (default), 'counterOffers', 'privatelyOfferedToAddress'
-                nftoken = true, // Include NFT token data and metadata
-                offersValidate = true, // Include validation status
-                assets = true // Include asset URLs (requires Standard API plan)
+            list = null // null (default - user created), 'counterOffers', 'privatelyOfferedToAddress'
         } = options;
 
-        // Build query parameters
-        const queryParams = new URLSearchParams();
-        if (list) queryParams.append('list', list);
-        if (nftoken) queryParams.append('nftoken', 'true');
-        if (offersValidate) queryParams.append('offersValidate', 'true');
-        if (assets) queryParams.append('assets', 'true');
+        let endpoint;
+        
+        // Map list types to appropriate xrpldata.com endpoints
+        if (list === 'counterOffers') {
+            // Counter offers - offers made on the user's NFTs
+            endpoint = `/xls20-nfts/offers/nftowner/${address}`;
+        } else if (list === 'privatelyOfferedToAddress') {
+            // Privately offered to address (including transfers and private sales)
+            endpoint = `/xls20-nfts/offers/offerdestination/${address}`;
+        } else {
+            // Default - user created offers
+            endpoint = `/xls20-nfts/offers/offerowner/${address}`;
+        }
 
-        const url = `${BITHOMP_API_BASE}/nft-offers/${address}?${queryParams.toString()}`;
+        const url = `${XRPLDATA_API_BASE}${endpoint}`;
 
         const response = await fetch(url, {
             method: 'GET',
             headers: {
-                'x-bithomp-token': API_URLS.bithompToken,
                 'Content-Type': 'application/json'
             }
         });
 
         if (!response.ok) {
-            throw new Error(`Bithomp API error: ${response.status} ${response.statusText}`);
+            throw new Error(`xrpldata.com API error: ${response.status} ${response.statusText}`);
         }
 
-        const data = await response.json();
+        const responseData = await response.json();
 
-        // ✅ Filter only valid offers
-        const validOffers = data.nftOffers ? data.nftOffers.filter(o => o.valid === true) : [];
+        // Extract offers from the new response structure
+        const offers = responseData?.data?.offers || [];
+        const ledgerInfo = responseData?.info || null;
 
         return {
-            ...data,
-            nftOffers: validOffers
+            nftOffers: offers,
+            account: address,
+            ledgerInfo: ledgerInfo,
+            total: offers.length
         };
 
-        // return data;
     } catch (error) {
-        console.error('Error fetching NFT offers from Bithomp:', error);
+        console.error('Error fetching NFT offers from xrpldata.com:', error);
         throw error;
     }
 };
@@ -156,49 +160,57 @@ export const getNFTOffers = async (address, options = {}) => {
 export const getAllNFTOffers = async (address) => {
     try {
         // Fetch offers created by the user (default list)
-        const userCreatedOffers = await getNFTOffers(address, {
-            list: null, // Default - offers created by the user
-            nftoken: true,
-            offersValidate: true,
-            assets: true
-        });
-        console.log('User Created Offers:', userCreatedOffers);
+        let userCreatedOffers = { nftOffers: [] };
+        try {
+            userCreatedOffers = await getNFTOffers(address, {
+                list: null // Default - offers created by the user
+            });
+            console.log('✅ User Created Offers:', userCreatedOffers);
+        } catch (error) {
+            console.warn('⚠️ Error fetching user created offers:', error.message);
+        }
 
         // Fetch counter offers (offers made on the user's NFTs)
-        const counterOffers = await getNFTOffers(address, {
-            list: 'counterOffers',
-            nftoken: true,
-            offersValidate: true,
-            assets: true
-        });
-        console.log('Counter Offers:', counterOffers);
+        let counterOffers = { nftOffers: [] };
+        try {
+            counterOffers = await getNFTOffers(address, {
+                list: 'counterOffers'
+            });
+            console.log('✅ Counter Offers:', counterOffers);
+        } catch (error) {
+            console.warn('⚠️ Error fetching counter offers:', error.message);
+        }
 
-        // Fetch privately offered to address (brokers, private offers, NFT transfers)
-        const privateOffers = await getNFTOffers(address, {
-            list: 'privatelyOfferedToAddress',
-            nftoken: true,
-            offersValidate: true,
-            assets: true
-        });
-        console.log('Private Offers:', privateOffers);
+        // Fetch privately offered to address (transfers, private offers)
+        let privateOffers = { nftOffers: [] };
+        try {
+            privateOffers = await getNFTOffers(address, {
+                list: 'privatelyOfferedToAddress'
+            });
+            console.log('✅ Private Offers:', privateOffers);
+        } catch (error) {
+            console.warn('⚠️ Error fetching private offers:', error.message);
+        }
+
+        const userCreatedList = userCreatedOffers.nftOffers || [];
+        const counterOffersList = counterOffers.nftOffers || [];
+        const privateOffersList = privateOffers.nftOffers || [];
 
         return {
-            userCreatedOffers: userCreatedOffers.nftOffers || [],
-            counterOffers: counterOffers.nftOffers || [],
-            privateOffers: privateOffers.nftOffers || [],
+            userCreatedOffers: userCreatedList,
+            counterOffers: counterOffersList,
+            privateOffers: privateOffersList,
             summary: {
-                totalUserCreated: userCreatedOffers.nftOffers?.length || 0,
-                totalCounterOffers: counterOffers.nftOffers?.length || 0,
-                totalPrivateOffers: privateOffers.nftOffers?.length || 0,
-                totalOffers: (userCreatedOffers.nftOffers?.length || 0) +
-                    (counterOffers.nftOffers?.length || 0) +
-                    (privateOffers.nftOffers?.length || 0)
+                totalUserCreated: userCreatedList.length,
+                totalCounterOffers: counterOffersList.length,
+                totalPrivateOffers: privateOffersList.length,
+                totalOffers: userCreatedList.length + counterOffersList.length + privateOffersList.length
             },
             owner: address,
-            ownerDetails: userCreatedOffers.ownerDetails || null
+            ownerDetails: null
         };
     } catch (error) {
-        console.error('Error fetching all NFT offers:', error);
+        console.error('❌ Error fetching all NFT offers:', error);
         throw error;
     }
 };
