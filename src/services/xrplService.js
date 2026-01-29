@@ -95,12 +95,12 @@ export const getWalletOffers = async (walletAddress) => {
 };
 
 /**
- * Fetch all NFT offers for a given address and categorize them
- * Uses the comprehensive endpoint that returns all offer types
+ * Fetch all NFT offers for a given address from xrpldata.com API
+ * Uses the comprehensive endpoint that returns all offer types in one call
  * @param {string} address - The XRPL address
- * @returns {Promise<Object>} Categorized NFT offers data
+ * @returns {Promise<Object>} All NFT offers data
  */
-export const getAllNFTOffers = async (address) => {
+export const getNFTOffers = async (address) => {
     try {
         const url = `${XRPLDATA_API_BASE}/xls20-nfts/offers/all/account/${address}`;
 
@@ -116,44 +116,41 @@ export const getAllNFTOffers = async (address) => {
         }
 
         const responseData = await response.json();
+
+        // Extract data from the comprehensive response
         const data = responseData?.data || {};
         const ledgerInfo = responseData?.info || null;
 
-        // Initialize categorized arrays
-        const madeOffers = [];
-        const receivedOffers = [];
-        const incomingTransfers = [];
-        const outgoingTransfers = [];
-
-        // Helper function to check if amount is zero (transfer)
-        const isTransferAmount = (amount) => {
-            if (amount === "0" || amount === 0) return true;
-            if (amount === null || amount === undefined || amount === '') return true;
-            try {
-                return parseFloat(String(amount)) === 0;
-            } catch {
-                return false;
-            }
+        return {
+            offersOwned: data.offers_owned || [],
+            offersForOwnNfts: data.offers_for_own_nfts || [],
+            offersAsDestination: data.offers_as_destination || [],
+            account: address,
+            ledgerInfo: ledgerInfo
         };
 
-        // Process offers_owned (offers you created)
-        const offersOwned = data.offers_owned || [];
-        offersOwned.forEach(offer => {
-            const amount = offer.Amount || offer.amount;
-            
-            if (isTransferAmount(amount)) {
-                // Outgoing transfer (you created, amount=0)
-                outgoingTransfers.push(offer);
-            } else {
-                // Made offer (you created, amount>0)
-                madeOffers.push(offer);
-            }
-        });
+    } catch (error) {
+        console.error('Error fetching NFT offers from xrpldata.com:', error);
+        throw error;
+    }
+};
 
-        // Process offers_for_own_nfts (offers on NFTs you own)
-        const offersForOwnNfts = data.offers_for_own_nfts || [];
-        const flattenedCounterOffers = [];
+/**
+ * Fetch all NFT offers for an address (uses single comprehensive API call)
+ * @param {string} address - The XRPL address
+ * @returns {Promise<Object>} Combined NFT offers data
+ */
+export const getAllNFTOffers = async (address) => {
+    try {
+        const data = await getNFTOffers(address);
         
+        // Extract offers from comprehensive response
+        const userCreatedOffers = data.offersOwned || [];
+        const offersForOwnNfts = data.offersForOwnNfts || [];
+        const offersAsDestination = data.offersAsDestination || [];
+
+        // Flatten offers for owned NFTs (combine buy and sell offers from each NFT)
+        const counterOffers = [];
         offersForOwnNfts.forEach(nftGroup => {
             const nftId = nftGroup.NFTokenID;
             const nftOwner = nftGroup.NFTokenOwner;
@@ -162,7 +159,7 @@ export const getAllNFTOffers = async (address) => {
             // Add buy offers
             if (nftGroup.buy && Array.isArray(nftGroup.buy)) {
                 nftGroup.buy.forEach(offer => {
-                    flattenedCounterOffers.push({
+                    counterOffers.push({
                         ...offer,
                         NFTokenOwner: nftOwner,
                         URI: uri,
@@ -174,7 +171,7 @@ export const getAllNFTOffers = async (address) => {
             // Add sell offers
             if (nftGroup.sell && Array.isArray(nftGroup.sell)) {
                 nftGroup.sell.forEach(offer => {
-                    flattenedCounterOffers.push({
+                    counterOffers.push({
                         ...offer,
                         NFTokenOwner: nftOwner,
                         URI: uri,
@@ -184,48 +181,25 @@ export const getAllNFTOffers = async (address) => {
             }
         });
 
-        // All offers on NFTs you own go to receivedOffers (amount > 0)
-        flattenedCounterOffers.forEach(offer => {
-            const amount = offer.Amount || offer.amount;
-            if (!isTransferAmount(amount)) {
-                receivedOffers.push(offer);
-            }
-        });
-
-        // Process offers_as_destination (offers where you are the destination)
-        const offersAsDestination = data.offers_as_destination || [];
-        offersAsDestination.forEach(offer => {
-            const amount = offer.Amount || offer.amount;
-            
-            if (isTransferAmount(amount)) {
-                // Incoming transfer (destination=you, amount=0)
-                incomingTransfers.push(offer);
-            } else {
-                // Received offer (destination=you, amount>0)
-                receivedOffers.push(offer);
-            }
-        });
-
-        console.log('✅ NFT Offers Categorized:');
-        console.log('  📨 Incoming Transfers:', incomingTransfers.length);
-        console.log('  📤 Outgoing Transfers:', outgoingTransfers.length);
-        console.log('  📥 Offers Received:', receivedOffers.length);
-        console.log('  💼 Offers Made:', madeOffers.length);
+        console.log('✅ Offers Owned (created by you):', userCreatedOffers.length);
+        console.log('✅ Offers for Own NFTs (on NFTs you own):', counterOffers.length);
+        console.log('✅ Offers as Destination (where you are destination):', offersAsDestination.length);
 
         return {
-            madeOffers: madeOffers,
-            receivedOffers: receivedOffers,
-            incomingTransfers: incomingTransfers,
-            outgoingTransfers: outgoingTransfers,
+            userCreatedOffers: userCreatedOffers,
+            counterOffers: counterOffers,
+            destinationOffers: offersAsDestination,
+            privateOffers: offersAsDestination, // Alias for backward compatibility
             summary: {
-                totalMadeOffers: madeOffers.length,
-                totalReceivedOffers: receivedOffers.length,
-                totalIncomingTransfers: incomingTransfers.length,
-                totalOutgoingTransfers: outgoingTransfers.length,
-                totalOffers: madeOffers.length + receivedOffers.length + incomingTransfers.length + outgoingTransfers.length
+                totalUserCreated: userCreatedOffers.length,
+                totalCounterOffers: counterOffers.length,
+                totalDestinationOffers: offersAsDestination.length,
+                totalPrivateOffers: offersAsDestination.length,
+                totalOffers: userCreatedOffers.length + counterOffers.length + offersAsDestination.length
             },
             owner: address,
-            ledgerInfo: ledgerInfo
+            ownerDetails: null,
+            ledgerInfo: data.ledgerInfo
         };
     } catch (error) {
         console.error('❌ Error fetching all NFT offers:', error);
