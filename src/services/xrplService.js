@@ -163,10 +163,12 @@ export const getAllNFTOffers = async (address) => {
         }
 
         for(let i = 0; i < data.offersForOwnNfts.length; i++) {
-            if(data.offersForOwnNfts[i].Amount == 0) {
-                outgoingOffers.push(data.offersForOwnNfts[i]);
-            } else {
-                madeOffers.push(data.offersForOwnNfts[i]);
+            for(let j = 0; j < data.offersForOwnNfts[i].sell.length; j++) {
+                if(data.offersForOwnNfts[i].sell[j].Amount == 0) {
+                    outgoingOffers.push(data.offersForOwnNfts[i].sell[j]);
+                } else {
+                    madeOffers.push(data.offersForOwnNfts[i].sell[j]);
+                }
             }
         }
 
