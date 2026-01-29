@@ -127,6 +127,8 @@ export const getNFTOffers = async (address, options = {}) => {
             }
         });
 
+        console.log("response => ", response)
+
         if (!response.ok) {
             throw new Error(`Bithomp API error: ${response.status} ${response.statusText}`);
         }
