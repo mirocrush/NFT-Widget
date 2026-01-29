@@ -5,6 +5,7 @@ import API_URLS from '../config.js';
 
 const XRPL_NODE = 'wss://s.altnet.rippletest.net:51233'; // Using testnet, change to mainnet for production
 const BITHOMP_API_BASE = 'https://bithomp.com/api/v2';
+const XRPLDATA_API_BASE = 'https://api.xrpldata.com';
 
 const isValidAmount = (amount) => {
     if (!amount) return false;
@@ -45,6 +46,117 @@ const isValidOffer = (offer) => {
     }
 
     return true;
+};
+
+/**
+ * Helper: Check if offer is a sell offer based on XRPL Flags
+ * @param {number} flags - XRPL Flags bitfield
+ * @returns {boolean} True if sell offer
+ */
+const isSellOffer = (flags) => {
+    const TF_SELL_NFTOKEN = 0x00000001; // Bit 0 indicates sell offer
+    return (flags & TF_SELL_NFTOKEN) !== 0;
+};
+
+/**
+ * Helper: Validate offer data
+ * @param {Object} offer - Offer object from xrpldata API
+ * @returns {Object} Validation result with valid flag and errors array
+ */
+const validateOffer = (offer) => {
+    const errors = [];
+
+    // Check required fields
+    if (!offer.OfferID || !offer.Owner || !offer.NFTokenID) {
+        errors.push("Missing required fields");
+    }
+
+    // Validate amount for non-transfer offers
+    if (offer.Amount && offer.Amount !== "0") {
+        const amount = parseInt(offer.Amount);
+        if (isNaN(amount) || amount < 0) {
+            errors.push("Invalid amount");
+        }
+    }
+
+    // Check expiration (XRPL uses Ripple Epoch: seconds since Jan 1, 2000)
+    if (offer.Expiration) {
+        const currentTime = Math.floor(Date.now() / 1000);
+        const xrplEpoch = 946684800; // XRPL epoch offset (Jan 1, 2000 in Unix time)
+        const expirationTime = offer.Expiration + xrplEpoch;
+        if (expirationTime < currentTime) {
+            errors.push("Offer expired");
+        }
+    }
+
+    return {
+        valid: errors.length === 0,
+        validationErrors: errors
+    };
+};
+
+/**
+ * Helper: Transform xrpldata offer to Bithomp-compatible format
+ * @param {Object} offer - Raw offer from xrpldata API
+ * @returns {Object} Transformed offer in Bithomp format
+ */
+const transformXRPLDataOffer = (offer) => {
+    const validation = validateOffer(offer);
+
+    return {
+        offerIndex: offer.OfferID,
+        account: offer.Owner,
+        amount: offer.Amount,
+        nftokenID: offer.NFTokenID,
+        flags: {
+            sellToken: isSellOffer(offer.Flags || 0)
+        },
+        destination: offer.Destination || null,
+        valid: validation.valid,
+        validationErrors: validation.validationErrors,
+        expiration: offer.Expiration || null,
+        createdAt: null, // Not available in xrpldata
+        // nftoken metadata will be added later
+    };
+};
+
+/**
+ * Helper: Flatten offers_for_own_nfts structure from xrpldata API
+ * @param {Array} offers_for_own_nfts - Nested offer structure
+ * @returns {Array} Flattened array of offers
+ */
+const flattenCounterOffers = (offers_for_own_nfts) => {
+    const flattened = [];
+
+    if (!Array.isArray(offers_for_own_nfts)) return flattened;
+
+    offers_for_own_nfts.forEach(nftOffers => {
+        // Process buy offers on this NFT
+        if (nftOffers.buy && Array.isArray(nftOffers.buy)) {
+            nftOffers.buy.forEach(offer => {
+                flattened.push({
+                    ...offer,
+                    NFTokenID: offer.NFTokenID || nftOffers.NFTokenID,
+                    URI: nftOffers.URI,
+                    NFTokenOwner: nftOffers.NFTokenOwner
+                });
+            });
+        }
+
+        // Process sell offers on this NFT
+        if (nftOffers.sell && Array.isArray(nftOffers.sell)) {
+            nftOffers.sell.forEach(offer => {
+                flattened.push({
+                    ...offer,
+                    NFTokenID: offer.NFTokenID || nftOffers.NFTokenID,
+                    URI: nftOffers.URI,
+                    NFTokenOwner: nftOffers.NFTokenOwner
+                });
+            });
+        }
+    });
+
+    return flattened;
 };
 
 export const getWalletOffers = async (walletAddress) => {
@@ -201,6 +313,71 @@ export const getAllNFTOffers = async (address) => {
         };
     } catch (error) {
         console.error('Error fetching all NFT offers:', error);
+        throw error;
+    }
+};
+
+/**
+ * Fetch all NFT offers from xrpldata.com API (NEW IMPLEMENTATION)
+ * @param {string} address - The XRPL address
+ * @returns {Promise<Object>} Combined NFT offers data (Bithomp-compatible format)
+ */
+export const getAllNFTOffersFromXRPLData = async (address) => {
+    try {
+        const url = `${XRPLDATA_API_BASE}/xls20-nfts/offers/all/account/${address}`;
+
+        console.log('🔍 Fetching NFT offers from xrpldata.com:', url);
+
+        const response = await fetch(url, {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error(`xrpldata API error: ${response.status} ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        console.log('✅ Raw xrpldata response:', data);
+
+        // Transform offers_owned (user created offers)
+        const userCreatedOffers = (data.data?.offers_owned || [])
+            .map(transformXRPLDataOffer)
+            .filter(offer => offer.valid); // Filter valid offers
+
+        // Transform offers_for_own_nfts (counter offers on user's NFTs)
+        const flatCounterOffers = flattenCounterOffers(data.data?.offers_for_own_nfts || []);
+        const counterOffers = flatCounterOffers
+            .map(transformXRPLDataOffer)
+            .filter(offer => offer.valid);
+
+        // Transform offers_as_destination (private offers to user)
+        const privateOffers = (data.data?.offers_as_destination || [])
+            .map(transformXRPLDataOffer)
+            .filter(offer => offer.valid);
+
+        console.log('📤 User created offers:', userCreatedOffers.length);
+        console.log('📥 Counter offers:', counterOffers.length);
+        console.log('🔒 Private offers:', privateOffers.length);
+
+        return {
+            userCreatedOffers,
+            counterOffers,
+            privateOffers,
+            summary: {
+                totalUserCreated: userCreatedOffers.length,
+                totalCounterOffers: counterOffers.length,
+                totalPrivateOffers: privateOffers.length,
+                totalOffers: userCreatedOffers.length + counterOffers.length + privateOffers.length
+            },
+            owner: address,
+            ownerDetails: null, // Not available in xrpldata
+            ledgerInfo: data.info || null // Additional ledger information
+        };
+    } catch (error) {
+        console.error('❌ Error fetching NFT offers from xrpldata:', error);
         throw error;
     }
 };
