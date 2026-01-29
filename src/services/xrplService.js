@@ -149,6 +149,27 @@ export const getAllNFTOffers = async (address) => {
         const offersForOwnNfts = data.offersForOwnNfts || [];
         const offersAsDestination = data.offersAsDestination || [];
 
+        const madeOffers = [];
+        const receivedOffers = [];
+        const incomingOffers = [];
+        const outgoingOffers = [];
+
+        for(let i = 0; i < data.offersAsDestination.length; i++) {
+            if(data.offersAsDestination[i].Amount == 0) {
+                incomingOffers.push(data.offersAsDestination[i]);
+            } else {
+                receivedOffers.push(data.offersAsDestination[i]);
+            }
+        }
+
+        for(let i = 0; i < data.offersForOwnNfts.length; i++) {
+            if(data.offersForOwnNfts[i].Amount == 0) {
+                outgoingOffers.push(data.offersForOwnNfts[i]);
+            } else {
+                madeOffers.push(data.offersForOwnNfts[i]);
+            }
+        }
+
         // Flatten offers for owned NFTs (combine buy and sell offers from each NFT)
         const counterOffers = [];
         offersForOwnNfts.forEach(nftGroup => {
@@ -196,6 +217,12 @@ export const getAllNFTOffers = async (address) => {
                 totalDestinationOffers: offersAsDestination.length,
                 totalPrivateOffers: offersAsDestination.length,
                 totalOffers: userCreatedOffers.length + counterOffers.length + offersAsDestination.length
+            },
+            UI: {
+                madeOffers,
+                receivedOffers,
+                incomingOffers,
+                outgoingOffers
             },
             owner: address,
             ownerDetails: null,
