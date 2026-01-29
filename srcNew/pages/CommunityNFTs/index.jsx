@@ -84,11 +84,22 @@ const CommunityNFTs = ({ membersList, myNftData, wgtParameters, refreshOffers, w
         const collectionName = group.collection;
 
         if (!collections[collectionKey]) {
+          // Derive a friendly collection name with better fallbacks
+          const derivedName =
+            collectionName ||
+            group.collectionInfo?.collectionName ||
+            group.collectionInfo?.name ||
+            group.collectionInfo?.sampleNft?.metadata?.collection?.name ||
+            group.collectionInfo?.sampleNft?.metadata?.name ||
+            (group.collectionInfo?.issuer && group.collectionInfo?.taxon
+              ? `${group.collectionInfo.issuer.slice(0, 6)}...${group.collectionInfo.issuer.slice(-4)} (Taxon ${group.collectionInfo.taxon})`
+              : "Unknown Collection");
+
           collections[collectionKey] = {
-            name: collectionName,
+            name: derivedName,
             collectionKey,
-            issuer: group.issuer || null,
-            nftokenTaxon: group.nftokenTaxon || null,
+            issuer: group.issuer || group.collectionInfo?.issuer || null,
+            nftokenTaxon: group.nftokenTaxon || group.collectionInfo?.taxon || null,
             totalNFTs: 0,
             members: new Set(),
             nfts: [],
@@ -112,15 +123,22 @@ const CommunityNFTs = ({ membersList, myNftData, wgtParameters, refreshOffers, w
         }
 
         if (!collections[collectionKey].sampleImage) {
-          if (group.nfts && group.nfts.length > 0 && group.nfts[0].imageURI) {
-            collections[collectionKey].sampleImage = group.nfts[0].imageURI;
-          } else if (group.collectionInfo?.sampleImage) {
+          // Prefer loaded NFT images first
+          if (group.nfts && group.nfts.length > 0) {
+            const withImage = group.nfts.find((n) => n.imageURI || n.assets?.image || n.metadata?.image);
+            if (withImage) {
+              collections[collectionKey].sampleImage = withImage.imageURI || withImage.assets?.image || withImage.metadata?.image;
+            }
+          }
+
+          // Fallbacks from collection info
+          if (!collections[collectionKey].sampleImage && group.collectionInfo?.sampleImage) {
             collections[collectionKey].sampleImage = group.collectionInfo.sampleImage;
-          } else if (group.collectionInfo?.sampleNft?.assets?.image) {
+          } else if (!collections[collectionKey].sampleImage && group.collectionInfo?.sampleNft?.assets?.image) {
             collections[collectionKey].sampleImage = group.collectionInfo.sampleNft.assets.image;
-          } else if (group.collectionInfo?.sampleNft?.metadata?.image) {
+          } else if (!collections[collectionKey].sampleImage && group.collectionInfo?.sampleNft?.metadata?.image) {
             collections[collectionKey].sampleImage = group.collectionInfo.sampleNft.metadata.image;
-          } else if (group.collectionInfo?.sampleNft?.imageURI) {
+          } else if (!collections[collectionKey].sampleImage && group.collectionInfo?.sampleNft?.imageURI) {
             collections[collectionKey].sampleImage = group.collectionInfo.sampleNft.imageURI;
           }
         }
@@ -131,6 +149,12 @@ const CommunityNFTs = ({ membersList, myNftData, wgtParameters, refreshOffers, w
       if (collection && collection.members) {
         collection.memberCount = collection.members.size;
         collection.members = Array.from(collection.members);
+        // If name is still generic, try to refine using first member NFT metadata
+        if (collection.name?.includes('Taxon') || collection.name === 'Unknown Collection') {
+          const firstNft = collection.nfts[0];
+          const metaName = firstNft?.metadata?.collection?.name || firstNft?.metadata?.name;
+          if (metaName) collection.name = metaName;
+        }
       }
     });
 

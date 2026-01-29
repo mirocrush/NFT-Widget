@@ -15,16 +15,19 @@ import ImageCacheDebugPanel from "./ImageCacheDebugPanel";
 import { Package } from "lucide-react";
 import { useTheme } from "../context/ThemeContext";
 import imageCache from "../services/imageCache";
+import { getAllAccountNFTs } from "../services/dhaliService";
+import { resolveNFTMetadata } from "../services/metadataResolver";
+import { loadUserCollections as dhaliLoadUserCollections, loadCollectionNFTs as dhaliLoadCollectionNFTs } from "../services/nftCollectionService";
 
 const getImageData = async (nft) => {
   let URI = "";
   let name = nft.name;
 
   try {
-    const metadataUrl = `${API_URLS.marketPlace}/api/metadata/${nft?.NFTokenID}?assets=true`;
-    const response = await axios.get(metadataUrl);
-    URI = response.data.image; // Bithomp now provides direct image URLs with assets=true
-    name = response.data.name;
+    // Use Dhali to get raw NFT data, then resolve metadata
+    const metadata = await resolveNFTMetadata(nft);
+    URI = metadata.image || "";
+    name = metadata.name || nft.name;
   } catch (error) {
     console.log("Error fetching metadata:", error);
   }
@@ -258,59 +261,46 @@ const MatrixClientProvider = () => {
   // Function to load collections metadata AND the user's NFTs grouped by collection
   const loadUserCollections = async (walletAddress) => {
     try {
-      const url = `${API_URLS.marketPlace}/api/v2/nfts?owner=${walletAddress}&limit=400&assets=true&collectionDetails=true`;
-      const response = await fetch(url, {
-        method: "GET",
-        headers: { "x-bithomp-token": API_URLS.bithompToken },
+      const result = await dhaliLoadUserCollections(walletAddress, {
+        maxNFTs: 400,
+        batchSize: 5,
+        useCache: true
       });
 
-      if (!response.ok) {
-        console.warn(`Failed to fetch collections for ${walletAddress}: ${response.status}`);
+      if (!result || !result.collections) {
         return { collections: [], nftsByKey: {} };
       }
 
-      const data = await response.json();
-      const allNfts = Array.isArray(data.nfts) ? data.nfts : [];
-      if (allNfts.length === 0) {
-        return { collections: [], nftsByKey: {} };
-      }
-
-      // Build a lookup of NFTs per collectionKey = `${issuer}-${nftokenTaxon}`
-      const nftsByKey = allNfts.reduce((acc, nft) => {
-        const key = `${nft.issuer}-${nft.nftokenTaxon}`;
-        const imageURI = nft.assets?.image || nft.metadata?.image || nft.imageURI || "";
-
-        if (!acc[key]) acc[key] = [];
-        acc[key].push({
-          ...nft,
-          imageURI,
-          collectionName: nft.metadata?.collection?.name || nft.collection || `Collection ${nft.nftokenTaxon}`,
-        });
-        return acc;
-      }, {});
-
-      // Build collection summaries from the grouped NFTs
-      const collections = Object.entries(nftsByKey).map(([collectionKey, list]) => {
-        const sample = list.find((n) => n.imageURI) || list[0];
-        const name =
-          sample?.metadata?.collection?.name ||
-          sample?.metadata?.name ||
-          sample?.collectionName ||
-          `Collection ${sample?.nftokenTaxon ?? "Unknown"}`;
-        const sampleImage = sample?.assets?.image || sample?.metadata?.image || sample?.imageURI || null;
-
+      // Transform to expected format
+      const collectionsArray = Object.entries(result.collections).map(([collectionKey, collectionData]) => {
+        const sample = collectionData.nfts[0];
         return {
-          name,
-          issuer: sample.issuer,
-          nftokenTaxon: sample.nftokenTaxon,
+          name: collectionData.collectionName,
+          issuer: collectionData.issuer,
+          nftokenTaxon: collectionData.taxon,
           collectionKey,
-          nftCount: list.length,
+          nftCount: collectionData.count,
           sampleNft: sample,
-          sampleImage,
+          sampleImage: collectionData.sampleImage,
         };
       });
 
-      return { collections, nftsByKey };
+      // Build nftsByKey from collections
+      const nftsByKey = {};
+      Object.entries(result.collections).forEach(([key, collectionData]) => {
+        nftsByKey[key] = collectionData.nfts.map(nft => ({
+          ...nft,
+          nftokenID: nft.nftokenID,
+          issuer: nft.issuer,
+          nftokenTaxon: nft.taxon,
+          imageURI: nft.image,
+          collectionName: collectionData.collectionName,
+          metadata: nft.metadata,
+          assets: { image: nft.image },
+        }));
+      });
+
+      return { collections: collectionsArray, nftsByKey };
     } catch (error) {
       console.error(`❌ Error fetching collections for ${walletAddress}:`, error.message);
       return { collections: [], nftsByKey: {} };
@@ -335,48 +325,26 @@ const MatrixClientProvider = () => {
     setLoadingCollections((prev) => ({ ...prev, [cacheKey]: true }));
 
     try {
-      // First, fetch all NFTs for the wallet
-      const response = await fetch(
-        `${API_URLS.marketPlace}/api/v2/nfts?owner=${walletAddress}&limit=400&assets=true`,
-        {
-          method: "GET",
-          headers: {
-            "x-bithomp-token": API_URLS.bithompToken,
-          },
-        }
-      );
+      // Use Dhali collection service
+      const resolvedNFTs = await dhaliLoadCollectionNFTs(walletAddress, issuer, nftokenTaxon, {
+        maxNFTs: 400,
+        batchSize: 5
+      });
 
-      if (!response.ok) {
-        throw new Error("Failed to fetch NFT data");
-      }
-
-      const data = await response.json();
-      const allNfts = data.nfts || [];
-
-      // Filter NFTs by issuer and taxon if provided, otherwise by collection name
-      let filteredNfts = allNfts;
-      if (issuer && nftokenTaxon) {
-        filteredNfts = allNfts.filter((nft) => nft.issuer === issuer && nft.nftokenTaxon === nftokenTaxon);
-      } else if (collectionName) {
-        filteredNfts = allNfts.filter((nft) => {
-          const nftCollectionName = nft.metadata?.collection?.name || nft.collection;
-          return nftCollectionName === collectionName;
-        });
-      }
-
-      const enrichedNfts = await Promise.all(
-        filteredNfts.map(async (nft) => {
-          const imageURI = nft.assets?.image || nft.metadata?.image || nft.imageURI || "";
-          return {
-            ...nft,
-            imageURI,
-            userName,
-            userId,
-            ownerUsername: nft.ownerDetails?.username || null,
-            collectionName: nft.collection || collectionName,
-          };
-        })
-      );
+      // Transform to expected format
+      const enrichedNfts = resolvedNFTs.map((nft) => ({
+        nftokenID: nft.nftokenID,
+        issuer: nft.issuer,
+        nftokenTaxon: nft.taxon,
+        imageURI: nft.image,
+        metadata: nft.metadata,
+        assets: { image: nft.image },
+        collection: nft.collection,
+        userName,
+        userId,
+        ownerUsername: null,
+        collectionName: nft.collection?.name || collectionName,
+      }));
 
       // Preload images for better UX
       const imageUrls = enrichedNfts.map((nft) => nft.imageURI).filter((url) => url && url.trim() !== "");

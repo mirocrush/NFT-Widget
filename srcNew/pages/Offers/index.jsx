@@ -22,6 +22,7 @@ const Offers = ({
   const [receivedOffers, setReceivedOffers] = useState([]);
   const [madeOffers, setMadeOffers] = useState([]);
   const [incomingTransferOffers, setIncomingTransferOffers] = useState([]);
+  const [outgoingTransferOffers, setOutgoingTransferOffers] = useState([]);
   const [loading, setLoading] = useState(false);
   const [sellOffers, setSellOffers] = useState([]);
   const [usersOffer, setUsersOffer] = useState([]);
@@ -69,6 +70,26 @@ const Offers = ({
   const shortAddr = (a) =>
     a && a.length >= 10 ? `${a.slice(0, 6)}…${a.slice(-4)}` : a || "";
   const resolveName = (addr) => addressToName.get(addr) || shortAddr(addr) || "Unknown";
+
+  // Helper function to safely check if amount is a transfer (0)
+  const isTransferAmount = (amount) => {
+    if (amount === "0" || amount === 0) return true;
+    if (amount === null || amount === undefined || amount === '') return true;
+    try {
+      return parseFloat(String(amount)) === 0;
+    } catch {
+      return false;
+    }
+  };
+
+  // Validate offer structure
+  const isValidOffer = (offer) => {
+    return offer && 
+           typeof offer === 'object' &&
+           (offer.OfferID || offer.offerIndex || offer.index) &&
+           (offer.NFTokenID || offer.nftokenID) &&
+           (offer.Owner || offer.account || offer.owner);
+  };
 
   useEffect(() => {
     console.log("Offers->useEffect->incoming offer", incomingOffer);
@@ -315,203 +336,46 @@ const Offers = ({
 
   const fetchAllUsersOfers = async () => {
     try {
-      console.log("🔍 Fetching NFT offers from Bithomp for:", myWalletAddress);
+      console.log("🔍 Fetching NFT offers for:", myWalletAddress);
 
+      // Get pre-categorized offers from service
       const data = await getAllNFTOffers(myWalletAddress);
-      console.log("✅ NFT offers data from Bithomp:", data);
+      console.log("✅ NFT offers data:", data);
 
-      const brokerWalletAddress = API_URLS.brokerWalletAddress?.trim();
-      console.log("🏦 Broker wallet address:", brokerWalletAddress);
-
-      const isRelevantOffer = (offer) => {
-        if (!offer.destination || offer.amount === "0") {
-          console.log("✅ Direct transfer offer:", offer.offerIndex);
-          return true;
-        }
-        if (
-          brokerWalletAddress &&
-          (offer.destination === brokerWalletAddress ||
-            offer.account === brokerWalletAddress)
-        ) {
-          console.log("✅ Broker-involved offer:", offer.offerIndex);
-          return true;
-        }
-        if (
-          offer.destination === myWalletAddress ||
-          offer.account === myWalletAddress
-        ) {
-          console.log("✅ Direct offer (no broker):", offer.offerIndex);
-          return true;
-        }
-        console.log(
-          "❌ Filtered out brokered offer by another marketplace:",
-          offer.offerIndex,
-          {
-            destination: offer.destination,
-            account: offer.account,
-            amount: offer.amount,
-          }
-        );
-        return false;
-      };
-
-      const nftMapById = new Map();
-      const walletNftMap = {};
-
-      myNftData.forEach((member) => {
-        member.groupedNfts.forEach((group) => {
-          group.nfts.forEach((nft) => {
-            nftMapById.set(nft.nftokenID, { ...nft });
-          });
-        });
-        const wallet = member.walletAddress;
-        const nftIds = member.groupedNfts.flatMap((group) =>
-          group.nfts.map((nft) => nft.nftokenID)
-        );
-        walletNftMap[wallet] = new Set(nftIds);
-      });
-
-      const madeOffers_ = [];
-      const receivedOffers_ = [];
-
-      // User-created (made) offers
-      if (data.userCreatedOffers && data.userCreatedOffers.length > 0) {
-        console.log(
-          `📤 Processing ${data.userCreatedOffers.length} user created offers...`
-        );
-
-        data.userCreatedOffers
-          .filter(isRelevantOffer)
-          .forEach((offer) => {
-            const nftData =
-              offer.nftoken || nftMapById.get(offer.nftokenID);
-            madeOffers_.push({
-              offer: {
-                offerId: offer.offerIndex,
-                amount: offer.amount,
-                offerOwner: offer.account,
-                offerOwnerName: resolveName(offer.account), // ← HERE
-                nftId: offer.nftokenID,
-                isSell: offer.flags?.sellToken || false,
-                destination: offer.destination,
-                valid: offer.valid,
-                validationErrors: offer.validationErrors,
-                createdAt: offer.createdAt,
-                expiration: offer.expiration,
-              },
-              nft: nftData
-                ? {
-                    ...nftData,
-                    nftokenID: offer.nftokenID,
-                    metadata: nftData.metadata || offer.nftoken?.metadata,
-                    imageURI:
-                      nftData?.assets?.preview || offer.nftoken?.metadata?.image,
-                    name:
-                      nftData.name || offer.nftoken?.metadata?.name,
-                  }
-                : null,
-            });
-          });
+      // Validate data structure
+      if (!data || typeof data !== 'object' || !data.UI) {
+        console.error("❌ Invalid data structure from getAllNFTOffers");
+        setMadeOffers([]);
+        setReceivedOffers([]);
+        setIncomingTransferOffers([]);
+        setOutgoingTransferOffers([]);
+        return;
       }
 
-      // Counter offers (on NFTs you own)
-      if (data.counterOffers && data.counterOffers.length > 0) {
-        console.log(
-          `📥 Processing ${data.counterOffers.length} counter offers...`
-        );
+      // Use the pre-categorized offers from the UI object
+      const madeOffers_ = data.UI.madeOffers || [];
+      const receivedOffers_ = data.UI.receivedOffers || [];
+      const incomingTransfers_ = data.UI.incomingOffers || [];
+      const outgoingTransfers_ = data.UI.outgoingOffers || [];
 
-        data.counterOffers
-          .filter(isRelevantOffer)
-          .forEach((offer) => {
-            const nftData =
-              offer.nftoken || nftMapById.get(offer.nftokenID);
+      console.log("📊 Offers from service:");
+      console.log("  📨 Incoming Transfers:", incomingTransfers_.length);
+      console.log("  📤 Outgoing Transfers:", outgoingTransfers_.length);
+      console.log("  📥 Offers Received:", receivedOffers_.length);
+      console.log("  💼 Offers Made:", madeOffers_.length);
 
-            if (walletNftMap[myWalletAddress]?.has(offer.nftokenID)) {
-              receivedOffers_.push({
-                offer: {
-                  offerId: offer.offerIndex,
-                  amount: offer.amount,
-                  offerOwner: offer.account,
-                  offerOwnerName: resolveName(offer.account), // ← HERE
-                  nftId: offer.nftokenID,
-                  isSell: offer.flags?.sellToken || false,
-                  destination: offer.destination,
-                  valid: offer.valid,
-                  validationErrors: offer.validationErrors,
-                  createdAt: offer.createdAt,
-                  expiration: offer.expiration,
-                },
-                nft: nftData
-                  ? {
-                      ...nftData,
-                      nftokenID: offer.nftokenID,
-                      metadata:
-                        nftData.metadata || offer.nftoken?.metadata,
-                      imageURI:
-                        nftData?.assets?.preview ||
-                        offer.nftoken?.metadata?.image,
-                      name:
-                        nftData.name || offer.nftoken?.metadata?.name,
-                    }
-                  : null,
-              });
-            }
-          });
-      }
-
-      // Private offers (destination = you)
-      if (data.privateOffers && data.privateOffers.length > 0) {
-        console.log(
-          `🔒 Processing ${data.privateOffers.length} private offers...`
-        );
-
-        data.privateOffers
-          .filter(isRelevantOffer)
-          .forEach((offer) => {
-            const nftData =
-              offer.nftoken || nftMapById.get(offer.nftokenID);
-
-            if (offer.destination === myWalletAddress) {
-              receivedOffers_.push({
-                offer: {
-                  offerId: offer.offerIndex,
-                  amount: offer.amount,
-                  offerOwner: offer.account,
-                  offerOwnerName: resolveName(offer.account) , // ← HERE
-                  nftId: offer.nftokenID,
-                  isSell: offer.flags?.sellToken || false,
-                  destination: offer.destination,
-                  valid: offer.valid,
-                  validationErrors: offer.validationErrors,
-                  createdAt: offer.createdAt,
-                  expiration: offer.expiration,
-                },
-                nft: nftData
-                  ? {
-                      ...nftData,
-                      nftokenID: offer.nftokenID,
-                      metadata:
-                        nftData.metadata || offer.nftoken?.metadata,
-                      imageURI:
-                        nftData?.assets?.preview ||
-                        offer.nftoken?.metadata?.image,
-                      name:
-                        nftData.name || offer.nftoken?.metadata?.name,
-                    }
-                  : null,
-              });
-            }
-          });
-      }
-
-      console.log("📤 Made offers (after filtering):", madeOffers_);
-      console.log("📥 Received offers (after filtering):", receivedOffers_);
-      console.log("📊 Summary:", data.summary);
-
+      // Set all four states
+      setIncomingTransferOffers(incomingTransfers_);
+      setOutgoingTransferOffers(outgoingTransfers_);
       setMadeOffers(madeOffers_);
       setReceivedOffers(receivedOffers_);
     } catch (error) {
       console.error("❌ Error fetching NFT offers:", error);
+      // Set empty arrays on error to prevent UI from showing stale data
+      setMadeOffers([]);
+      setReceivedOffers([]);
+      setIncomingTransferOffers([]);
+      setOutgoingTransferOffers([]);
     }
   };
 
@@ -575,7 +439,7 @@ const Offers = ({
             <div className="animate-fade-in">
               <IncomingTransferToggle
                 title="Incoming Transfers"
-                incomingTransfers={receivedOffers}
+                incomingTransfers={incomingTransferOffers}
                 onAction={refreshOffers}
                 myOwnWalletAddress={myWalletAddress}
                 updateUsersNFTs={updateUsersNFTs}
@@ -588,7 +452,7 @@ const Offers = ({
             <div className="animate-fade-in" style={{ animationDelay: "0.1s" }}>
               <OutgoingTransferToggle
                 title="Outgoing Transfers"
-                outgoingTransfers={madeOffers}
+                outgoingTransfers={outgoingTransferOffers}
                 onAction={refreshOffers}
                 myOwnWalletAddress={myWalletAddress}
               />

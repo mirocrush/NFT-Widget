@@ -1,55 +1,34 @@
 import React, { useState, useMemo } from "react";
-import { ArrowLeft, User, Palette, Package, Search, X } from "lucide-react";
+import { ArrowLeft, User, Palette, Package } from "lucide-react";
 import nft_pic from "../../assets/nft.png";
 import { useCachedImage, useImagePreloader } from "../../hooks/useCachedImage";
 import NFTModal from "../../components/NFTModal";
 
-const CommunityNFTs = ({ membersList, myNftData, wgtParameters, refreshOffers, widgetApi, loadCollectionNFTs }) => {
+const MyNFTs = ({ membersList, myNftData, wgtParameters, refreshOffers, widgetApi, loadCollectionNFTs }) => {
   const [selectedCollection, setSelectedCollection] = useState(null);
   const [selectedNFT, setSelectedNFT] = useState(null);
   const [isNFTModalOpen, setIsNFTModalOpen] = useState(false);
-  const [searchTerm, setSearchTerm] = useState("");
 
-  const norm = (s) => (s || "").toLowerCase().trim();
-
-  // ----- Identify me robustly -----
+  // ----- ONLY MY NFTs -----
+  // Resolve current Matrix userId and "me" in myNftData
   const myMatrixUserId = useMemo(
     () => membersList?.find(m => m.name === wgtParameters.displayName)?.userId,
     [membersList, wgtParameters.displayName]
   );
 
-  const myNameNorm = norm(wgtParameters.displayName);
+  const me = useMemo(
+    () =>
+      myNftData?.find(
+        (u) => u.userId === myMatrixUserId || u.name === wgtParameters.displayName
+      ),
+    [myNftData, myMatrixUserId, wgtParameters.displayName]
+  );
 
-  // Find all of "my" user entries (handle name casing mismatches, duplicates)
-  const myEntries = useMemo(() => {
-    const entries = (myNftData || []).filter(u =>
-      norm(u.name) === myNameNorm || (myMatrixUserId && u.userId === myMatrixUserId)
-    );
-    return entries;
-  }, [myNftData, myMatrixUserId, myNameNorm]);
+  // Filter downstream data to only my entry
+  const myOnlyNftData = useMemo(() => (me ? [me] : []), [me]);
 
-  // Known self wallets (in case there are multiple)
-  const myWalletSet = useMemo(() => {
-    const set = new Set();
-    myEntries.forEach(e => {
-      if (e.walletAddress) set.add(norm(e.walletAddress));
-    });
-    return set;
-  }, [myEntries]);
-
-  // Main "me" record (first match) + wallet for modal actions
-  const me = myEntries[0];
+  // Use wallet from my profile (do NOT derive from Matrix userId)
   const myWalletAddress = me?.walletAddress || "";
-
-  // Exclude my own entry/users by (name || userId || wallet)
-  const communityNftData = useMemo(() => {
-    return (myNftData || []).filter(u => {
-      const isMyName = norm(u.name) === myNameNorm;
-      const isMyId = myMatrixUserId && u.userId === myMatrixUserId;
-      const isMyWallet = u.walletAddress && myWalletSet.has(norm(u.walletAddress));
-      return !(isMyName || isMyId || isMyWallet);
-    });
-  }, [myNftData, myMatrixUserId, myNameNorm, myWalletSet]);
 
   const handleNFTClick = (nft) => {
     setSelectedNFT(nft);
@@ -62,20 +41,19 @@ const CommunityNFTs = ({ membersList, myNftData, wgtParameters, refreshOffers, w
   };
 
   const handleNFTAction = () => {
-    if (refreshOffers) {
-      refreshOffers();
-    }
+    if (refreshOffers) refreshOffers();
     handleCloseNFTModal();
   };
 
-  // Group by collections across COMMUNITY users only
+  // Transform data to group by collections (ONLY my data)
   const collectionsData = useMemo(() => {
     const collections = {};
 
-    communityNftData.forEach(user => {
+    myOnlyNftData.forEach(user => {
       user.groupedNfts?.forEach(group => {
         if (!group || !group.collection) return;
 
+        // Prefer a stable key (issuer-taxon), fall back to collection name
         const collectionKey =
           group.collectionKey ||
           (group.issuer && group.nftokenTaxon ? `${group.issuer}-${group.nftokenTaxon}` : null) ||
@@ -93,24 +71,26 @@ const CommunityNFTs = ({ membersList, myNftData, wgtParameters, refreshOffers, w
             members: new Set(),
             nfts: [],
             collectionInfo: group.collectionInfo || null,
-            sampleImage: null
+            sampleImage: null,
           };
         }
 
         collections[collectionKey].totalNFTs += group.nftCount || group.nfts?.length || 0;
         collections[collectionKey].members.add(user.name);
 
+        // Add NFTs if already present
         if (group.nfts && group.nfts.length > 0) {
           collections[collectionKey].nfts.push(
-            ...group.nfts.map(nft => ({
+            ...group.nfts.map((nft) => ({
               ...nft,
               ownerName: user.name,
               ownerWallet: user.walletAddress,
-              ownerUserId: user.userId
+              ownerUserId: user.userId,
             }))
           );
         }
 
+        // Sample image for card
         if (!collections[collectionKey].sampleImage) {
           if (group.nfts && group.nfts.length > 0 && group.nfts[0].imageURI) {
             collections[collectionKey].sampleImage = group.nfts[0].imageURI;
@@ -127,47 +107,39 @@ const CommunityNFTs = ({ membersList, myNftData, wgtParameters, refreshOffers, w
       });
     });
 
-    Object.values(collections).forEach(collection => {
-      if (collection && collection.members) {
-        collection.memberCount = collection.members.size;
-        collection.members = Array.from(collection.members);
+    // Convert members Set to array + add memberCount
+    Object.values(collections).forEach((c) => {
+      if (c?.members) {
+        c.memberCount = c.members.size;
+        c.members = Array.from(c.members);
       }
     });
 
     return Object.values(collections)
       .filter(Boolean)
       .sort((a, b) => b.totalNFTs - a.totalNFTs);
-  }, [communityNftData]);
+  }, [myOnlyNftData]);
 
-  // 🔎 Filter collections by owner (member) name
-  const filteredCollections = useMemo(() => {
-    const q = norm(searchTerm);
-    if (!q) return collectionsData;
-    return collectionsData.filter(c =>
-      (c.members || []).some(m => norm(m).includes(q))
-    );
-  }, [collectionsData, searchTerm]);
-
-  // Extract collection images for preloading (use filtered list)
+  // Extract collection images for preloading
   const collectionImages = useMemo(() => {
-    return filteredCollections
-      .map(collection => collection.sampleImage)
-      .filter(image => {
+    return collectionsData
+      .map((collection) => collection.sampleImage)
+      .filter((image) => {
         const isValid =
           image &&
-          image.trim() !== '' &&
-          image !== 'undefined' &&
-          image !== 'null' &&
+          image.trim() !== "" &&
+          image !== "undefined" &&
+          image !== "null" &&
           image !== nft_pic;
         return isValid;
       });
-  }, [filteredCollections]);
+  }, [collectionsData]);
 
   // Preload collection images
   const { preloadProgress, isPreloading } = useImagePreloader(collectionImages, {
     enabled: true,
     delay: 500,
-    batchSize: 3
+    batchSize: 3,
   });
 
   if (selectedCollection) {
@@ -176,13 +148,12 @@ const CommunityNFTs = ({ membersList, myNftData, wgtParameters, refreshOffers, w
         collection={selectedCollection}
         onBack={() => setSelectedCollection(null)}
         membersList={membersList}
-        myNftData={communityNftData}      // community only
+        myNftData={myOnlyNftData}           
         wgtParameters={wgtParameters}
         refreshOffers={refreshOffers}
         widgetApi={widgetApi}
         loadCollectionNFTs={loadCollectionNFTs}
-        myWalletAddress={myWalletAddress} // viewer wallet
-        myWalletSet={myWalletSet}         // for extra safety filtering
+        myWalletAddress={myWalletAddress}   
       />
     );
   }
@@ -191,61 +162,32 @@ const CommunityNFTs = ({ membersList, myNftData, wgtParameters, refreshOffers, w
     <div className="h-full bg-gradient-to-br from-white/90 to-blue-50/90 dark:from-gray-900/90 dark:to-gray-800/90 backdrop-blur-sm">
       <div className="h-full overflow-y-auto custom-scrollbar px-3 py-6 space-y-6">
         {/* Header */}
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-500 rounded-xl flex items-center justify-center shadow-md">
-              <Package className="text-white w-5 h-5" />
-            </div>
-            <div>
-              <h2 className="text-xl font-bold text-gray-900 dark:text-white">Community Collections</h2>
-              <div className="flex items-center gap-2">
-                <p className="text-sm text-gray-600 dark:text-gray-400">
-                  {filteredCollections.length}
-                  {filteredCollections.length !== collectionsData.length && (
-                    <span className="text-gray-400 dark:text-gray-500"> / {collectionsData.length}</span>
-                  )} collection{filteredCollections.length !== 1 ? 's' : ''} from other members
-                </p>
-                {isPreloading && (
-                  <div className="flex items-center space-x-2 text-xs text-blue-600 dark:text-blue-400">
-                    <div className="w-4 h-4 bg-gradient-to-br from-blue-500 to-purple-500 rounded-full flex items-center justify-center">
-                      <div className="w-2 h-2 border border-white border-t-transparent rounded-full animate-spin"></div>
-                    </div>
-                    <span>Loading images... ({Math.round(preloadProgress)}%)</span>
-                  </div>
-                )}
-              </div>
-            </div>
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-500 rounded-xl flex items-center justify-center shadow-md">
+            <Package className="text-white w-5 h-5" />
           </div>
-
-          {/* Search by owner name (collections list) */}
-          <div className="w-full sm:w-72">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-              <input
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="Search collections by owner..."
-                aria-label="Search collections by owner name"
-                className="w-full pl-9 pr-8 py-2 rounded-lg bg-white/80 dark:bg-gray-800/80 border border-gray-200/60 dark:border-gray-700/60 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/60"
-              />
-              {searchTerm && (
-                <button
-                  onClick={() => setSearchTerm("")}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-                  aria-label="Clear search"
-                  type="button"
-                >
-                  <X className="w-4 h-4" />
-                </button>
+          <div className="flex-1">
+            <h2 className="text-xl font-bold text-gray-900 dark:text-white">Collections</h2>
+            <div className="flex items-center gap-2">
+              <p className="text-sm text-gray-600 dark:text-gray-400">
+                {collectionsData.length} collection{collectionsData.length !== 1 ? "s" : ""} owned by you
+              </p>
+              {isPreloading && (
+                <div className="flex items-center space-x-2 text-xs text-blue-600 dark:text-blue-400">
+                  <div className="w-4 h-4 bg-gradient-to-br from-blue-500 to-purple-500 rounded-full flex items-center justify-center">
+                    <div className="w-2 h-2 border border-white border-t-transparent rounded-full animate-spin"></div>
+                  </div>
+                  <span>Loading images... ({Math.round(preloadProgress)}%)</span>
+                </div>
               )}
             </div>
           </div>
         </div>
 
         {/* Collections Grid */}
-        {filteredCollections.length > 0 ? (
+        {collectionsData.length > 0 ? (
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-            {filteredCollections.map((collection, index) => (
+            {collectionsData.map((collection, index) => (
               <CollectionCard
                 key={collection.collectionKey || collection.name}
                 collection={collection}
@@ -260,13 +202,9 @@ const CommunityNFTs = ({ membersList, myNftData, wgtParameters, refreshOffers, w
               <Palette className="text-gray-400 w-12 h-12" />
             </div>
             <div className="space-y-2">
-              <h3 className="text-xl font-semibold text-gray-900 dark:text-white">
-                {searchTerm ? "No matching collections" : "No Community Collections"}
-              </h3>
+              <h3 className="text-xl font-semibold text-gray-900 dark:text-white">No Collections Found</h3>
               <p className="text-gray-600 dark:text-gray-400 max-w-md">
-                {searchTerm
-                  ? "Try a different owner name."
-                  : "Other members haven’t shared NFT collections yet."}
+                You don’t have any NFT collections in this room yet.
               </p>
             </div>
           </div>
@@ -278,9 +216,7 @@ const CommunityNFTs = ({ membersList, myNftData, wgtParameters, refreshOffers, w
         isOpen={isNFTModalOpen}
         onClose={handleCloseNFTModal}
         nft={selectedNFT}
-        isOwner={selectedNFT?.ownerWallet && myWalletAddress
-          ? norm(selectedNFT.ownerWallet) === norm(myWalletAddress)
-          : selectedNFT?.ownerName === wgtParameters.displayName}
+        isOwner={selectedNFT?.ownerName === wgtParameters.displayName}
         membersList={membersList}
         wgtParameters={wgtParameters}
         myWalletAddress={myWalletAddress}
@@ -312,7 +248,7 @@ const CollectionCard = ({ collection, index, onClick }) => {
             src={cachedImageSrc || nft_pic}
             alt={collection.name}
             className={`w-full h-full object-cover transition-all duration-500 ${
-              isLoaded ? 'opacity-100' : 'opacity-0'
+              isLoaded ? "opacity-100" : "opacity-0"
             } group-hover:scale-110`}
             onLoad={() => {}}
             onError={(e) => {
@@ -363,7 +299,7 @@ const CollectionCard = ({ collection, index, onClick }) => {
                 {collection.memberCount}
               </div>
               <div className="text-xs text-purple-600/70 dark:text-purple-400/70 font-medium">
-                Owner{collection.memberCount !== 1 ? 's' : ''}
+                Owner{collection.memberCount !== 1 ? "s" : ""}
               </div>
             </div>
           </div>
@@ -373,7 +309,10 @@ const CollectionCard = ({ collection, index, onClick }) => {
             <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Owners</h4>
             <div className="flex flex-wrap gap-2">
               {collection.members.slice(0, 3).map((member, idx) => (
-                <span key={idx} className="px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 text-xs rounded-full">
+                <span
+                  key={idx}
+                  className="px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 text-xs rounded-full"
+                >
                   {member}
                 </span>
               ))}
@@ -390,26 +329,22 @@ const CollectionCard = ({ collection, index, onClick }) => {
   );
 };
 
-// Collection Detail View Component (with NFT owner search)
+// Collection Detail View Component
 const CollectionDetailView = ({
   collection,
   onBack,
   membersList,
-  myNftData,            // community only
+  myNftData,            // already filtered to ONLY me
   wgtParameters,
   refreshOffers,
   widgetApi,
   loadCollectionNFTs,
-  myWalletAddress,      // viewer wallet
-  myWalletSet           // Set of normalized self wallets
+  myWalletAddress,      // passed in from parent
 }) => {
   const [loadedNFTs, setLoadedNFTs] = useState([]);
   const [loading, setLoading] = useState(false);
   const [selectedNFT, setSelectedNFT] = useState(null);
   const [isNFTModalOpen, setIsNFTModalOpen] = useState(false);
-  const [ownerSearch, setOwnerSearch] = useState("");
-
-  const norm = (s) => (s || "").toLowerCase().trim();
 
   const handleNFTClick = (nft) => {
     setSelectedNFT(nft);
@@ -422,32 +357,33 @@ const CollectionDetailView = ({
   };
 
   const handleNFTAction = () => {
-    if (refreshOffers) {
-      refreshOffers();
-    }
+    if (refreshOffers) refreshOffers();
     handleCloseNFTModal();
   };
 
-  // Load all NFTs for this collection from COMMUNITY users only
+  // Load NFTs for this collection (from only my data)
   React.useEffect(() => {
     const loadAllNFTsForCollection = async () => {
       setLoading(true);
-      let allNFTs = [];
+      const allNFTs = [];
 
       for (const user of myNftData) {
-        const userCollection = user.groupedNfts?.find(group =>
-          group.collectionKey === collection.collectionKey ||
-          (group.issuer === collection.issuer && group.nftokenTaxon === collection.nftokenTaxon) ||
-          group.collection === collection.name
+        const userCollection = user.groupedNfts?.find(
+          (group) =>
+            group.collectionKey === collection.collectionKey ||
+            (group.issuer === collection.issuer &&
+              group.nftokenTaxon === collection.nftokenTaxon) ||
+            group.collection === collection.name
         );
+
         if (userCollection) {
           if (userCollection.nfts && userCollection.nfts.length > 0) {
             allNFTs.push(
-              ...userCollection.nfts.map(nft => ({
+              ...userCollection.nfts.map((nft) => ({
                 ...nft,
                 ownerName: user.name,
                 ownerWallet: user.walletAddress,
-                ownerUserId: user.userId
+                ownerUserId: user.userId,
               }))
             );
           } else if (userCollection.nftCount > 0) {
@@ -462,11 +398,11 @@ const CollectionDetailView = ({
               );
               if (nfts && nfts.length > 0) {
                 allNFTs.push(
-                  ...nfts.map(nft => ({
+                  ...nfts.map((nft) => ({
                     ...nft,
                     ownerName: user.name,
                     ownerWallet: user.walletAddress,
-                    ownerUserId: user.userId
+                    ownerUserId: user.userId,
                   }))
                 );
               }
@@ -477,76 +413,33 @@ const CollectionDetailView = ({
         }
       }
 
-      // 🔒 Safety filter: drop any of *my* NFTs that slipped through
-      if (myWalletSet && myWalletSet.size > 0) {
-        allNFTs = allNFTs.filter(nft => !myWalletSet.has(norm(nft.ownerWallet)));
-      } else if (myWalletAddress) {
-        allNFTs = allNFTs.filter(nft => norm(nft.ownerWallet) !== norm(myWalletAddress));
-      }
-
       setLoadedNFTs(allNFTs);
       setLoading(false);
     };
 
     loadAllNFTsForCollection();
-  }, [collection, myNftData, loadCollectionNFTs, myWalletAddress, myWalletSet]);
-
-  // 🔎 Filter NFTs inside the collection by owner name
-  const filteredNFTs = useMemo(() => {
-    const q = norm(ownerSearch);
-    if (!q) return loadedNFTs;
-    return loadedNFTs.filter(n => norm(n.ownerName).includes(q));
-  }, [loadedNFTs, ownerSearch]);
+  }, [collection, myNftData, loadCollectionNFTs]);
 
   return (
     <div className="h-full bg-gradient-to-br from-white/90 to-blue-50/90 dark:from-gray-900/90 dark:to-gray-800/90 backdrop-blur-sm">
       <div className="h-full overflow-y-auto custom-scrollbar px-3 py-6 space-y-6">
-        {/* Header with Back Button + Search */}
-        <div className="flex items-center justify-between gap-4 flex-wrap">
-          <div className="flex items-center gap-4">
-            <button
-              onClick={onBack}
-              className="p-2 rounded-xl bg-white/80 dark:bg-gray-800/80 text-gray-700 dark:text-gray-200 border border-gray-200/50 dark:border-gray-700/50 hover:bg-gray-100/80 dark:hover:bg-gray-700/80 shadow-md hover:shadow-lg transition-all duration-200"
-            >
-              <ArrowLeft className="w-5 h-5" />
-            </button>
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-500 rounded-xl flex items-center justify-center shadow-md">
-                <Palette className="text-white w-5 h-5" />
-              </div>
-              <div>
-                <h2 className="text-xl font-bold text-gray-900 dark:text-white">{collection.name}</h2>
-                <p className="text-sm text-gray-600 dark:text-gray-400">
-                  {filteredNFTs.length}
-                  {filteredNFTs.length !== loadedNFTs.length && (
-                    <span className="text-gray-400 dark:text-gray-500"> / {loadedNFTs.length}</span>
-                  )} NFTs from {collection.memberCount} member{collection.memberCount !== 1 ? 's' : ''}
-                </p>
-              </div>
+        {/* Header with Back Button */}
+        <div className="flex items-center gap-4">
+          <button
+            onClick={onBack}
+            className="p-2 rounded-xl bg-white/80 dark:bg-gray-800/80 text-gray-700 dark:text-gray-200 border border-gray-200/50 dark:border-gray-700/50 hover:bg-gray-100/80 dark:hover:bg-gray-700/80 shadow-md hover:shadow-lg transition-all duration-200"
+          >
+            <ArrowLeft className="w-5 h-5" />
+          </button>
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-500 rounded-xl flex items-center justify-center shadow-md">
+              <Palette className="text-white w-5 h-5" />
             </div>
-          </div>
-
-          {/* Search NFTs by owner name */}
-          <div className="w-full sm:w-72">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-              <input
-                value={ownerSearch}
-                onChange={(e) => setOwnerSearch(e.target.value)}
-                placeholder="Search NFTs by owner..."
-                aria-label="Search NFTs by owner name"
-                className="w-full pl-9 pr-8 py-2 rounded-lg bg-white/80 dark:bg-gray-800/80 border border-gray-200/60 dark:border-gray-700/60 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/60"
-              />
-              {ownerSearch && (
-                <button
-                  onClick={() => setOwnerSearch("")}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-                  aria-label="Clear NFT owner search"
-                  type="button"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              )}
+            <div>
+              <h2 className="text-xl font-bold text-gray-900 dark:text-white">{collection.name}</h2>
+              <p className="text-sm text-gray-600 dark:text-gray-400">
+                {collection.totalNFTs} NFTs • {collection.memberCount} owner{collection.memberCount !== 1 ? "s" : ""}
+              </p>
             </div>
           </div>
         </div>
@@ -558,35 +451,33 @@ const CollectionDetailView = ({
               <div className="animate-spin rounded-full h-8 w-8 border-2 border-white border-t-transparent"></div>
             </div>
             <div className="space-y-2">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-                Loading NFTs...
-              </h3>
-              <p className="text-gray-600 dark:text-gray-400">
-                Fetching NFTs from this collection
-              </p>
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Loading NFTs...</h3>
+              <p className="text-gray-600 dark:text-gray-400">Fetching NFTs from this collection</p>
             </div>
           </div>
-        ) : filteredNFTs.length > 0 ? (
+        ) : loadedNFTs.length > 0 ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-            {filteredNFTs.map((nft, index) => (
+            {loadedNFTs.map((nft, index) => (
               <NFTWithOwnerCard
-                key={`${nft.nftokenID || nft.NFTokenID || nft.id || index}-${nft.ownerWallet || "owner"}`}
+                key={`${nft.nftokenID || nft.NFTokenID || nft.id || index}-${nft.ownerWallet || "me"}`}
                 nft={nft}
                 index={index}
                 wgtParameters={wgtParameters}
+                membersList={membersList}
+                refreshOffers={refreshOffers}
+                widgetApi={widgetApi}
                 onClick={handleNFTClick}
-                myWalletAddress={myWalletAddress}
               />
             ))}
           </div>
         ) : (
           <div className="flex flex-col items-center justify-center h-64 space-y-4 text-center">
             <div className="w-20 h-20 bg-gradient-to-br from-gray-200 to-gray-300 dark:from-gray-700 dark:to-gray-600 rounded-full flex items-center justify-center">
-              <span className="text-3xl">🔎</span>
+              <span className="text-3xl">🎨</span>
             </div>
             <div className="space-y-2">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">No matching NFTs</h3>
-              <p className="text-gray-600 dark:text-gray-400">Try a different owner name.</p>
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">No NFTs Available</h3>
+              <p className="text-gray-600 dark:text-gray-400">No NFTs are currently available in this collection</p>
             </div>
           </div>
         )}
@@ -597,9 +488,7 @@ const CollectionDetailView = ({
         isOpen={isNFTModalOpen}
         onClose={handleCloseNFTModal}
         nft={selectedNFT}
-        isOwner={selectedNFT?.ownerWallet && myWalletAddress
-          ? norm(selectedNFT.ownerWallet) === norm(myWalletAddress)
-          : selectedNFT?.ownerName === wgtParameters.displayName}
+        isOwner={selectedNFT?.ownerName === wgtParameters.displayName}
         membersList={membersList}
         wgtParameters={wgtParameters}
         myWalletAddress={myWalletAddress}
@@ -611,17 +500,12 @@ const CollectionDetailView = ({
 };
 
 // NFT with Owner Card Component
-const NFTWithOwnerCard = ({ nft, index, wgtParameters, onClick, myWalletAddress }) => {
+const NFTWithOwnerCard = ({ nft, index, wgtParameters, onClick }) => {
   const { src: cachedImageSrc, isLoaded } = useCachedImage(
     nft.imageURI || nft.metadata?.image,
     nft_pic,
     { eager: true }
   );
-
-  const isMineByWallet =
-    nft.ownerWallet && myWalletAddress
-      ? (nft.ownerWallet || "").toLowerCase().trim() === (myWalletAddress || "").toLowerCase().trim()
-      : false;
 
   return (
     <div
@@ -634,9 +518,9 @@ const NFTWithOwnerCard = ({ nft, index, wgtParameters, onClick, myWalletAddress 
         <div className="relative h-48">
           <img
             src={cachedImageSrc}
-            alt={nft.metadata?.name || 'NFT'}
+            alt={nft.metadata?.name || "NFT"}
             className={`w-full h-full object-cover transition-all duration-500 ${
-              isLoaded ? 'opacity-100' : 'opacity-0'
+              isLoaded ? "opacity-100" : "opacity-0"
             } group-hover:scale-110`}
           />
 
@@ -651,10 +535,10 @@ const NFTWithOwnerCard = ({ nft, index, wgtParameters, onClick, myWalletAddress 
         <div className="p-4 space-y-3">
           <div>
             <h3 className="font-bold text-gray-900 dark:text-white text-sm truncate">
-              {nft.metadata?.name || 'Unnamed NFT'}
+              {nft.metadata?.name || "Unnamed NFT"}
             </h3>
             <p className="text-xs text-gray-600 dark:text-gray-400 truncate">
-              {nft.collectionName || 'Unknown Collection'}
+              {nft.collectionName || "Unknown Collection"}
             </p>
           </div>
 
@@ -667,8 +551,7 @@ const NFTWithOwnerCard = ({ nft, index, wgtParameters, onClick, myWalletAddress 
               </span>
             </div>
 
-            {/* Tradeable if NOT mine (wallet-based check first, fallback to displayName) */}
-            {(!isMineByWallet && nft.ownerName !== wgtParameters.displayName) && (
+            {nft.ownerName !== wgtParameters.displayName && (
               <div className="bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 px-2 py-1 rounded-full text-xs font-semibold">
                 Tradeable
               </div>
@@ -680,4 +563,4 @@ const NFTWithOwnerCard = ({ nft, index, wgtParameters, onClick, myWalletAddress 
   );
 };
 
-export default CommunityNFTs;
+export default MyNFTs;
