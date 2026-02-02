@@ -71,9 +71,10 @@ export const parseURI = (uri) => {
 /**
  * Resolve IPFS URI to HTTP URL with fallback gateways
  * @param {string} ipfsUri - IPFS URI (ipfs://... or Qm... hash)
+ * @param {boolean} skipCheck - Skip gateway availability check (faster, default true)
  * @returns {Promise<string>} Resolved HTTP URL
  */
-export const resolveIPFS = async (ipfsUri) => {
+export const resolveIPFS = async (ipfsUri, skipCheck = true) => {
   if (!ipfsUri) return null;
 
   // Extract hash from various IPFS formats
@@ -87,11 +88,17 @@ export const resolveIPFS = async (ipfsUri) => {
   // Remove any ipfs/ prefix if still present
   hash = hash.replace(/^ipfs\//, '');
 
-  // Try each gateway in order until one succeeds
+  // PERFORMANCE OPTIMIZATION: Skip expensive gateway checks
+  // Just use the first (most reliable) gateway directly
+  if (skipCheck) {
+    return `${IPFS_GATEWAYS[0]}${hash}`;
+  }
+
+  // Legacy fallback: Try each gateway in order until one succeeds
   for (const gateway of IPFS_GATEWAYS) {
     const url = `${gateway}${hash}`;
     try {
-      const response = await axios.head(url, { timeout: 5000 });
+      const response = await axios.head(url, { timeout: 3000 });
       if (response.status === 200) {
         return url;
       }
@@ -125,9 +132,10 @@ export const resolveArweave = (arweaveUri) => {
  * Fetch metadata from URL with retry logic
  * @param {string} url - Metadata URL
  * @param {number} retries - Number of retries
+ * @param {number} timeout - Request timeout in ms
  * @returns {Promise<Object>} Metadata JSON
  */
-export const fetchMetadata = async (url, retries = 2) => {
+export const fetchMetadata = async (url, retries = 1, timeout = 5000) => {
   if (!url) return null;
 
   // Check cache first
@@ -139,7 +147,7 @@ export const fetchMetadata = async (url, retries = 2) => {
   for (let i = 0; i <= retries; i++) {
     try {
       const response = await axios.get(url, {
-        timeout: 10000,
+        timeout: timeout,
         headers: {
           'Accept': 'application/json'
         }
@@ -156,11 +164,11 @@ export const fetchMetadata = async (url, retries = 2) => {
       }
     } catch (error) {
       if (i === retries) {
-        console.error(`Failed to fetch metadata from ${url}:`, error.message);
+        console.warn(`Failed to fetch metadata from ${url}:`, error.message);
         return null;
       }
-      // Wait before retry
-      await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
+      // Wait before retry (shorter delays)
+      await new Promise(resolve => setTimeout(resolve, 500 * (i + 1)));
     }
   }
 
@@ -248,13 +256,44 @@ export const resolveNFTMetadata = async (nft) => {
 };
 
 /**
+ * Create lightweight NFT object without metadata resolution (FAST)
+ * @param {Object} nft - NFT object from Dhali
+ * @returns {Object} Basic NFT structure without metadata
+ */
+export const createLightweightNFT = (nft) => {
+  if (!nft) return null;
+
+  return {
+    nftokenID: nft.NFTokenID,
+    issuer: nft.Issuer,
+    taxon: nft.NFTokenTaxon,
+    uri: nft.URI ? parseURI(nft.URI) : null,
+    metadata: {},
+    image: null,
+    name: `NFT ${nft.NFTokenID.substring(0, 8)}...`,
+    description: null,
+    attributes: [],
+    collection: null,
+    // Flag to indicate metadata needs resolution
+    metadataResolved: false
+  };
+};
+
+/**
  * Resolve metadata for multiple NFTs in batches
  * @param {Array} nfts - Array of NFT objects
  * @param {number} batchSize - Number of NFTs to process in parallel
+ * @param {boolean} skipMetadata - Skip metadata resolution for faster initial load
  * @returns {Promise<Array>} Array of resolved NFTs
  */
-export const resolveNFTsBatch = async (nfts, batchSize = 5) => {
+export const resolveNFTsBatch = async (nfts, batchSize = 5, skipMetadata = false) => {
   if (!nfts || nfts.length === 0) return [];
+
+  // PERFORMANCE OPTIMIZATION: Skip metadata resolution for initial load
+  if (skipMetadata) {
+    console.log(`⚡ Creating lightweight NFTs (no metadata resolution)`);
+    return nfts.map(nft => createLightweightNFT(nft));
+  }
 
   const results = [];
 
@@ -300,6 +339,7 @@ export default {
   fetchMetadata,
   resolveNFTMetadata,
   resolveNFTsBatch,
+  createLightweightNFT,
   clearCache,
   getCacheStats
 };

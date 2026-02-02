@@ -86,12 +86,13 @@ export const groupNFTsByCollection = (resolvedNFTs) => {
 export const loadUserCollections = async (address, options = {}) => {
   const {
     maxNFTs = 400,
-    batchSize = 5,
-    useCache = true
+    batchSize = 10,
+    useCache = true,
+    skipMetadata = true  // PERFORMANCE: Skip metadata by default for fast initial load
   } = options;
 
   // Check cache
-  const cacheKey = `${address}-collections`;
+  const cacheKey = `${address}-collections${skipMetadata ? '-light' : ''}`;
   if (useCache) {
     const cached = collectionCache.get(cacheKey);
     if (cached && (Date.now() - cached.timestamp < CACHE_TTL)) {
@@ -107,10 +108,17 @@ export const loadUserCollections = async (address, options = {}) => {
     const rawNFTs = await getAllAccountNFTs(address, maxNFTs);
     console.log(`✅ Fetched ${rawNFTs.length} NFTs from Dhali`);
 
-    // Resolve metadata in batches
-    console.log(`🔍 Resolving metadata...`);
-    const resolvedNFTs = await resolveNFTsBatch(rawNFTs, batchSize);
-    console.log(`✅ Resolved metadata for ${resolvedNFTs.length} NFTs`);
+    // Resolve metadata in batches (or skip for fast load)
+    if (skipMetadata) {
+      console.log(`⚡ Skipping metadata resolution for fast initial load`);
+    } else {
+      console.log(`🔍 Resolving metadata...`);
+    }
+    const resolvedNFTs = await resolveNFTsBatch(rawNFTs, batchSize, skipMetadata);
+
+    if (!skipMetadata) {
+      console.log(`✅ Resolved metadata for ${resolvedNFTs.length} NFTs`);
+    }
 
     // Group by collection
     const collections = groupNFTsByCollection(resolvedNFTs);
@@ -121,7 +129,8 @@ export const loadUserCollections = async (address, options = {}) => {
       totalNFTs: resolvedNFTs.length,
       collections,
       allNFTs: resolvedNFTs,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      metadataResolved: !skipMetadata
     };
 
     // Cache the result
@@ -148,13 +157,14 @@ export const loadUserCollections = async (address, options = {}) => {
 export const loadCollectionNFTs = async (address, issuer, taxon, options = {}) => {
   const {
     maxNFTs = 400,
-    batchSize = 5
+    batchSize = 10,
+    skipMetadata = false  // For collection detail view, resolve metadata
   } = options;
 
   try {
     console.log(`📦 Loading collection ${issuer}-${taxon} for ${address}...`);
 
-    // Fetch raw NFTs from Dhali
+    // Fetch raw NFTs from Dhali (will be cached by Dhali service)
     const rawNFTs = await getAllAccountNFTs(address, maxNFTs);
 
     // Filter by issuer and taxon
@@ -165,14 +175,61 @@ export const loadCollectionNFTs = async (address, issuer, taxon, options = {}) =
     console.log(`✅ Found ${collectionNFTs.length} NFTs in collection`);
 
     // Resolve metadata
-    const resolvedNFTs = await resolveNFTsBatch(collectionNFTs, batchSize);
-    console.log(`✅ Resolved metadata for collection NFTs`);
+    const resolvedNFTs = await resolveNFTsBatch(collectionNFTs, batchSize, skipMetadata);
+
+    if (!skipMetadata) {
+      console.log(`✅ Resolved metadata for ${resolvedNFTs.length} collection NFTs`);
+    }
 
     return resolvedNFTs;
   } catch (error) {
     console.error(`❌ Error loading collection NFTs:`, error);
     throw error;
   }
+};
+
+/**
+ * Resolve metadata for NFTs that don't have it yet (lazy loading)
+ * @param {Array} nfts - Array of NFTs (some may already have metadata)
+ * @param {number} batchSize - Batch processing size
+ * @returns {Promise<Array>} Array of NFTs with metadata resolved
+ */
+export const resolveMetadataLazy = async (nfts, batchSize = 10) => {
+  if (!nfts || nfts.length === 0) return [];
+
+  // Find NFTs that need metadata resolution
+  const needsResolution = nfts.filter(nft => !nft.metadataResolved);
+
+  if (needsResolution.length === 0) {
+    console.log('✅ All NFTs already have metadata');
+    return nfts;
+  }
+
+  console.log(`🔍 Resolving metadata for ${needsResolution.length} NFTs...`);
+
+  // Resolve metadata for those NFTs
+  const resolvedNFTs = await resolveNFTsBatch(
+    needsResolution.map(nft => ({
+      NFTokenID: nft.nftokenID,
+      Issuer: nft.issuer,
+      NFTokenTaxon: nft.taxon,
+      URI: nft.uri
+    })),
+    batchSize,
+    false  // Don't skip metadata
+  );
+
+  // Create a map of resolved metadata
+  const resolvedMap = new Map(
+    resolvedNFTs.map(nft => [nft.nftokenID, nft])
+  );
+
+  // Update original array with resolved metadata
+  return nfts.map(nft => {
+    if (nft.metadataResolved) return nft;
+    const resolved = resolvedMap.get(nft.nftokenID);
+    return resolved || nft;
+  });
 };
 
 /**
@@ -268,6 +325,7 @@ export default {
   loadUserCollections,
   loadCollectionNFTs,
   getNFTWithMetadata,
+  resolveMetadataLazy,
   toBithompFormat,
   toBithompFormatBatch,
   clearCache,
