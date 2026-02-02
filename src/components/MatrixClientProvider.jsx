@@ -252,13 +252,11 @@ const MatrixClientProvider = () => {
     try {
       console.log('📦 Loading collections from Dhali for:', walletAddress);
 
-      // PERFORMANCE OPTIMIZATION: Skip metadata resolution for fast initial load
-      // Metadata will be resolved lazily when viewing specific collections
+      // Use Dhali service to load collections with metadata resolution
       const dhaliResult = await loadDhaliCollections(walletAddress, {
         maxNFTs: 400,
-        batchSize: 10,
-        useCache: true,
-        skipMetadata: true  // ⚡ FAST MODE: Skip IPFS metadata resolution
+        batchSize: 5,
+        useCache: true
       });
 
       // Transform Dhali format to match existing UI expectations
@@ -326,12 +324,11 @@ const MatrixClientProvider = () => {
     try {
       console.log(`📦 Loading collection NFTs from Dhali for ${issuer}-${nftokenTaxon}`);
 
-      // Load all user collections from Dhali with FAST mode (cached, so instant on subsequent calls)
+      // Load all user collections from Dhali (cached, so fast on subsequent calls)
       const dhaliResult = await loadDhaliCollections(walletAddress, {
         maxNFTs: 400,
-        batchSize: 10,
-        useCache: true,
-        skipMetadata: true  // Fast initial load without metadata
+        batchSize: 5,
+        useCache: true
       });
 
       const { allNFTs } = dhaliResult;
@@ -347,26 +344,8 @@ const MatrixClientProvider = () => {
         });
       }
 
-      console.log(`🔍 Resolving metadata for ${filteredNfts.length} NFTs in collection...`);
-
-      // LAZY METADATA RESOLUTION: Only resolve metadata for THIS collection
-      // This happens on-demand when user clicks on a collection
-      const { resolveNFTsBatch } = await import('../services/metadataResolver');
-      const resolvedNfts = await resolveNFTsBatch(
-        filteredNfts.map(nft => ({
-          NFTokenID: nft.nftokenID,
-          Issuer: nft.issuer,
-          NFTokenTaxon: nft.taxon,
-          URI: nft.uri
-        })),
-        10,  // Process 10 at a time
-        false  // Don't skip metadata - resolve it now
-      );
-
-      console.log(`✅ Resolved metadata for ${resolvedNfts.length} NFTs`);
-
-      // Transform to UI-compatible format with resolved metadata
-      const enrichedNfts = resolvedNfts.map((nft) => {
+      // Transform to UI-compatible format
+      const enrichedNfts = filteredNfts.map((nft) => {
         const imageURI = nft.image || nft.metadata?.image || "";
         return {
           nftokenID: nft.nftokenID,
