@@ -10,7 +10,8 @@
 import axios from 'axios';
 
 // Dhali XRPL Cluster Endpoint
-const DHALI_ENDPOINT = 'https://run.api.dhali.io/199fd80b-1776-4708-b1a1-4b2bb386435d/';
+// const DHALI_ENDPOINT = 'https://run.api.dhali.io/199fd80b-1776-4708-b1a1-4b2bb386435d/';
+const DHALI_ENDPOINT = 'https://run.api.dhali.io/d995db530-7e57-46d1-ac8a-76324794e0c9/';
 
 // Payment claim from environment variable
 const getPaymentClaim = () => {
