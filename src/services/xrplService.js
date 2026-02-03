@@ -2,6 +2,7 @@ import {
     Client
 } from 'xrpl';
 import API_URLS from '../config.js';
+import { getNFTOffersForAddress, getAllNFTOffersForAddress } from './dhaliService';
 
 const XRPL_NODE = 'wss://s.altnet.rippletest.net:51233'; // Using testnet, change to mainnet for production
 const BITHOMP_API_BASE = 'https://bithomp.com/api/v2';
@@ -208,7 +209,7 @@ export const getWalletOffers = async (walletAddress) => {
 };
 
 /**
- * Fetch NFT offers for a given address from Bithomp API
+ * Fetch NFT offers for a given address using new Dhali API
  * @param {string} address - The XRPL address
  * @param {Object} options - Additional options for the API call
  * @returns {Promise<Object>} NFT offers data
@@ -217,102 +218,57 @@ export const getNFTOffers = async (address, options = {}) => {
     try {
         const {
             list = null, // null (default), 'counterOffers', 'privatelyOfferedToAddress'
-                nftoken = true, // Include NFT token data and metadata
-                offersValidate = true, // Include validation status
-                assets = true // Include asset URLs (requires Standard API plan)
+            nftoken = true, // Include NFT token data and metadata
+            offersValidate = true, // Include validation status (always true with new API)
+            assets = true // Include asset URLs (CDN hosted)
         } = options;
 
-        // Build query parameters
-        const queryParams = new URLSearchParams();
-        if (list) queryParams.append('list', list);
-        if (nftoken) queryParams.append('nftoken', 'true');
-        if (offersValidate) queryParams.append('offersValidate', 'true');
-        if (assets) queryParams.append('assets', 'true');
+        console.log(`📡 Fetching NFT offers from new Dhali API for ${address}`);
 
-        const url = `${BITHOMP_API_BASE}/nft-offers/${address}?${queryParams.toString()}`;
-
-        const response = await fetch(url, {
-            method: 'GET',
-            headers: {
-                'x-bithomp-token': API_URLS.bithompToken,
-                'Content-Type': 'application/json'
-            }
+        // Use new Dhali API
+        const data = await getNFTOffersForAddress(address, {
+            list,
+            nftoken,
+            assets
         });
 
-        console.log("response => ", response)
+        console.log(`✅ Fetched ${data.nftOffers?.length || 0} offers from Dhali`);
 
-        if (!response.ok) {
-            throw new Error(`Bithomp API error: ${response.status} ${response.statusText}`);
-        }
-
-        const data = await response.json();
-
-        // ✅ Filter only valid offers
-        const validOffers = data.nftOffers ? data.nftOffers.filter(o => o.valid === true) : [];
+        // Filter only valid offers (those with valid flags)
+        const validOffers = data.nftOffers ?
+            data.nftOffers.filter(o => o.flags !== undefined) : [];
 
         return {
             ...data,
             nftOffers: validOffers
         };
-
-        // return data;
     } catch (error) {
-        console.error('Error fetching NFT offers from Bithomp:', error);
+        console.error('❌ Error fetching NFT offers from Dhali:', error);
         throw error;
     }
 };
 
 /**
- * Fetch all NFT offers for an address (both created by user and offers on user's NFTs)
+ * Fetch all NFT offers for an address using new Dhali API
  * @param {string} address - The XRPL address
  * @returns {Promise<Object>} Combined NFT offers data
  */
 export const getAllNFTOffers = async (address) => {
     try {
-        // Fetch offers created by the user (default list)
-        const userCreatedOffers = await getNFTOffers(address, {
-            list: null, // Default - offers created by the user
-            nftoken: true,
-            offersValidate: true,
-            assets: true
-        });
-        console.log('User Created Offers:', userCreatedOffers);
+        console.log(`📡 Fetching all NFT offers from new Dhali API for ${address}`);
 
-        // Fetch counter offers (offers made on the user's NFTs)
-        const counterOffers = await getNFTOffers(address, {
-            list: 'counterOffers',
-            nftoken: true,
-            offersValidate: true,
-            assets: true
-        });
-        console.log('Counter Offers:', counterOffers);
+        // Use new Dhali API - single function to get all offer types
+        const result = await getAllNFTOffersForAddress(address);
 
-        // Fetch privately offered to address (brokers, private offers, NFT transfers)
-        const privateOffers = await getNFTOffers(address, {
-            list: 'privatelyOfferedToAddress',
-            nftoken: true,
-            offersValidate: true,
-            assets: true
+        console.log('✅ All offers fetched:', {
+            userCreated: result.userCreatedOffers.length,
+            counter: result.counterOffers.length,
+            private: result.privateOffers.length
         });
-        console.log('Private Offers:', privateOffers);
 
-        return {
-            userCreatedOffers: userCreatedOffers.nftOffers || [],
-            counterOffers: counterOffers.nftOffers || [],
-            privateOffers: privateOffers.nftOffers || [],
-            summary: {
-                totalUserCreated: userCreatedOffers.nftOffers?.length || 0,
-                totalCounterOffers: counterOffers.nftOffers?.length || 0,
-                totalPrivateOffers: privateOffers.nftOffers?.length || 0,
-                totalOffers: (userCreatedOffers.nftOffers?.length || 0) +
-                    (counterOffers.nftOffers?.length || 0) +
-                    (privateOffers.nftOffers?.length || 0)
-            },
-            owner: address,
-            ownerDetails: userCreatedOffers.ownerDetails || null
-        };
+        return result;
     } catch (error) {
-        console.error('Error fetching all NFT offers:', error);
+        console.error('❌ Error fetching all NFT offers:', error);
         throw error;
     }
 };

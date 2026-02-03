@@ -348,12 +348,98 @@ export const getAccountTransactions = async (address, options = {}) => {
  */
 export const getLedgerInfo = async () => {
   try {
-    const result = await callDhaliAPI('ledger', {
-      ledger_index: 'validated'
-    });
+    const result = await callDhaliAPI('/ledger', {});
     return result;
   } catch (error) {
     console.error('❌ Error fetching ledger info:', error);
+    throw error;
+  }
+};
+
+/**
+ * Get NFT offers for an address (NEW REST API)
+ * @param {string} address - XRPL account address
+ * @param {Object} options - Options
+ * @returns {Promise<Object>} NFT offers with metadata
+ */
+export const getNFTOffersForAddress = async (address, options = {}) => {
+  const {
+    list = null, // null (default), 'counterOffers', 'privatelyOfferedToAddress'
+    nftoken = true, // Include NFT token data and metadata
+    assets = true // Include asset URLs (CDN images)
+  } = options;
+
+  const queryParams = {
+    ...(list && { list }),
+    ...(nftoken && { nftoken: 'true' }),
+    ...(assets && { assets: 'true' })
+  };
+
+  try {
+    const result = await callDhaliAPI(`/nft-offers/${address}`, queryParams);
+
+    // Filter only valid offers (those with proper flags)
+    const validOffers = result.nftOffers ?
+      result.nftOffers.filter(o => o.flags !== undefined) : [];
+
+    return {
+      ...result,
+      nftOffers: validOffers
+    };
+  } catch (error) {
+    console.error(`❌ Error fetching NFT offers for ${address}:`, error);
+    throw error;
+  }
+};
+
+/**
+ * Get all NFT offers for an address (created, counter, and private offers)
+ * @param {string} address - XRPL account address
+ * @returns {Promise<Object>} Combined NFT offers data
+ */
+export const getAllNFTOffersForAddress = async (address) => {
+  try {
+    // Fetch offers created by the user (default list)
+    const userCreatedOffers = await getNFTOffersForAddress(address, {
+      list: null,
+      nftoken: true,
+      assets: true
+    });
+    console.log('📤 User Created Offers:', userCreatedOffers.nftOffers?.length || 0);
+
+    // Fetch counter offers (offers made on the user's NFTs)
+    const counterOffers = await getNFTOffersForAddress(address, {
+      list: 'counterOffers',
+      nftoken: true,
+      assets: true
+    });
+    console.log('📥 Counter Offers:', counterOffers.nftOffers?.length || 0);
+
+    // Fetch privately offered to address
+    const privateOffers = await getNFTOffersForAddress(address, {
+      list: 'privatelyOfferedToAddress',
+      nftoken: true,
+      assets: true
+    });
+    console.log('🔒 Private Offers:', privateOffers.nftOffers?.length || 0);
+
+    return {
+      userCreatedOffers: userCreatedOffers.nftOffers || [],
+      counterOffers: counterOffers.nftOffers || [],
+      privateOffers: privateOffers.nftOffers || [],
+      summary: {
+        totalUserCreated: userCreatedOffers.nftOffers?.length || 0,
+        totalCounterOffers: counterOffers.nftOffers?.length || 0,
+        totalPrivateOffers: privateOffers.nftOffers?.length || 0,
+        totalOffers: (userCreatedOffers.nftOffers?.length || 0) +
+          (counterOffers.nftOffers?.length || 0) +
+          (privateOffers.nftOffers?.length || 0)
+      },
+      owner: address,
+      ownerDetails: userCreatedOffers.ownerDetails || null
+    };
+  } catch (error) {
+    console.error('❌ Error fetching all NFT offers:', error);
     throw error;
   }
 };
@@ -369,5 +455,7 @@ export default {
   getAccountNFTOffers,
   getAccountInfo,
   getAccountTransactions,
-  getLedgerInfo
+  getLedgerInfo,
+  getNFTOffersForAddress,
+  getAllNFTOffersForAddress
 };

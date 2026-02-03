@@ -3,45 +3,73 @@
  * NFT COLLECTION SERVICE
  * ============================================================================
  * Handles NFT collection grouping and management
- * Provides compatibility layer for Bithomp-style collection data
+ * Uses new Dhali REST API with pre-resolved metadata and CDN assets
  * ============================================================================
  */
 
-import { getAllAccountNFTs } from './dhaliService';
-import { resolveNFTsBatch } from './metadataResolver';
+import { getAccountNFTs } from './dhaliService';
 
 // In-memory cache for collections
 const collectionCache = new Map();
 const CACHE_TTL = 15 * 60 * 1000; // 15 minutes
 
 /**
+ * Transform raw NFT from new API to standardized format
+ * @param {Object} nft - Raw NFT from new Dhali API
+ * @returns {Object} Standardized NFT object
+ */
+const transformNFT = (nft) => {
+  return {
+    nftokenID: nft.nftokenID,
+    issuer: nft.issuer,
+    taxon: nft.nftokenTaxon,
+    image: nft.assets?.image || nft.assets?.preview,
+    imageURI: nft.assets?.image || nft.assets?.preview,
+    thumbnail: nft.assets?.thumbnail,
+    metadata: nft.metadata || {},
+    collection: nft.metadata?.collection?.name || nft.collection,
+    collectionInfo: nft.metadata?.collection,
+    uri: nft.url || nft.uri,
+    name: nft.metadata?.name,
+    description: nft.metadata?.description,
+    attributes: nft.metadata?.attributes || [],
+    flags: nft.flags,
+    transferFee: nft.transferFee,
+    sequence: nft.sequence,
+    owner: nft.owner,
+    issuedAt: nft.issuedAt,
+    ownerChangedAt: nft.ownerChangedAt,
+    mintedByMarketplace: nft.mintedByMarketplace
+  };
+};
+
+/**
  * Group NFTs by collection (Issuer + Taxon)
- * @param {Array} resolvedNFTs - Array of NFTs with resolved metadata
+ * @param {Array} nfts - Array of NFTs from new API
  * @returns {Object} Collections grouped by issuer-taxon key
  */
-export const groupNFTsByCollection = (resolvedNFTs) => {
+export const groupNFTsByCollection = (nfts) => {
   const collections = {};
 
-  resolvedNFTs.forEach(nft => {
+  nfts.forEach(nft => {
     const collectionKey = `${nft.issuer}-${nft.taxon}`;
 
     if (!collections[collectionKey]) {
       // Try to get collection name from various sources
-      let collectionName = nft.collection?.name || nft.collection?.family;
+      let collectionName = nft.collection || nft.collectionInfo?.name;
 
       // If no collection name, try to derive from NFT metadata
       if (!collectionName && nft.metadata) {
         if (nft.metadata.collection?.name) {
           collectionName = nft.metadata.collection.name;
         } else if (nft.metadata.name) {
-          // Use the NFT's name as collection name (will be refined as more NFTs are added)
           collectionName = nft.metadata.name;
         } else if (nft.name) {
           collectionName = nft.name;
         }
       }
 
-      // Fallback to issuer address format (more informative than just taxon)
+      // Fallback to issuer address format
       if (!collectionName) {
         const shortIssuer = `${nft.issuer.substring(0, 6)}...${nft.issuer.substring(nft.issuer.length - 4)}`;
         collectionName = `${shortIssuer} (Taxon ${nft.taxon})`;
@@ -53,15 +81,18 @@ export const groupNFTsByCollection = (resolvedNFTs) => {
         collectionName: collectionName,
         nfts: [],
         count: 0,
-        sampleImage: null
+        sampleImage: null,
+        sampleNft: null
       };
     } else {
       // Update collection name if we find a better one
       const currentName = collections[collectionKey].collectionName;
-      if (currentName.includes('Taxon') && nft.collection?.name) {
-        collections[collectionKey].collectionName = nft.collection.name;
-      } else if (currentName.includes('Taxon') && nft.metadata?.collection?.name) {
-        collections[collectionKey].collectionName = nft.metadata.collection.name;
+      if (currentName.includes('Taxon')) {
+        if (nft.collection) {
+          collections[collectionKey].collectionName = nft.collection;
+        } else if (nft.metadata?.collection?.name) {
+          collections[collectionKey].collectionName = nft.metadata.collection.name;
+        }
       }
     }
 
@@ -72,21 +103,25 @@ export const groupNFTsByCollection = (resolvedNFTs) => {
     if (!collections[collectionKey].sampleImage && nft.image) {
       collections[collectionKey].sampleImage = nft.image;
     }
+
+    // Store first NFT as sample for collection info
+    if (!collections[collectionKey].sampleNft) {
+      collections[collectionKey].sampleNft = nft;
+    }
   });
 
   return collections;
 };
 
 /**
- * Load all NFTs for a user with metadata resolution
+ * Load all NFTs for a user (NEW API - metadata pre-resolved!)
  * @param {string} address - XRPL account address
  * @param {Object} options - Options for loading
- * @returns {Promise<Object>} Collections with resolved NFTs
+ * @returns {Promise<Object>} Collections with NFTs
  */
 export const loadUserCollections = async (address, options = {}) => {
   const {
-    maxNFTs = 400,
-    batchSize = 5,
+    limit = 400,
     useCache = true
   } = options;
 
@@ -103,34 +138,38 @@ export const loadUserCollections = async (address, options = {}) => {
   try {
     console.log(`📦 Loading NFTs for ${address}...`);
 
-    // Fetch raw NFTs from Dhali
-    const rawNFTs = await getAllAccountNFTs(address, maxNFTs);
-    console.log(`✅ Fetched ${rawNFTs.length} NFTs from Dhali`);
+    // Fetch NFTs from new Dhali API (metadata already included!)
+    const result = await getAccountNFTs(address, {
+      limit,
+      assets: true
+    });
 
-    // Resolve metadata in batches
-    console.log(`🔍 Resolving metadata...`);
-    const resolvedNFTs = await resolveNFTsBatch(rawNFTs, batchSize);
-    console.log(`✅ Resolved metadata for ${resolvedNFTs.length} NFTs`);
+    const rawNFTs = result.nfts || [];
+    console.log(`✅ Fetched ${rawNFTs.length} NFTs with metadata from Dhali`);
+
+    // Transform NFTs to standardized format
+    const transformedNFTs = rawNFTs.map(transformNFT);
+    console.log(`✅ Transformed ${transformedNFTs.length} NFTs`);
 
     // Group by collection
-    const collections = groupNFTsByCollection(resolvedNFTs);
+    const collections = groupNFTsByCollection(transformedNFTs);
     console.log(`✅ Grouped into ${Object.keys(collections).length} collections`);
 
-    const result = {
+    const resultData = {
       address,
-      totalNFTs: resolvedNFTs.length,
+      totalNFTs: transformedNFTs.length,
       collections,
-      allNFTs: resolvedNFTs,
+      allNFTs: transformedNFTs,
       timestamp: Date.now()
     };
 
     // Cache the result
     collectionCache.set(cacheKey, {
-      data: result,
+      data: resultData,
       timestamp: Date.now()
     });
 
-    return result;
+    return resultData;
   } catch (error) {
     console.error(`❌ Error loading collections for ${address}:`, error);
     throw error;
@@ -143,32 +182,33 @@ export const loadUserCollections = async (address, options = {}) => {
  * @param {string} issuer - NFT Issuer address
  * @param {number} taxon - NFT Taxon
  * @param {Object} options - Options
- * @returns {Promise<Array>} Array of resolved NFTs in collection
+ * @returns {Promise<Array>} Array of NFTs in collection
  */
 export const loadCollectionNFTs = async (address, issuer, taxon, options = {}) => {
-  const {
-    maxNFTs = 400,
-    batchSize = 5
-  } = options;
+  const { limit = 400 } = options;
 
   try {
     console.log(`📦 Loading collection ${issuer}-${taxon} for ${address}...`);
 
-    // Fetch raw NFTs from Dhali
-    const rawNFTs = await getAllAccountNFTs(address, maxNFTs);
+    // Fetch NFTs from new Dhali API
+    const result = await getAccountNFTs(address, {
+      limit,
+      assets: true
+    });
+
+    const rawNFTs = result.nfts || [];
 
     // Filter by issuer and taxon
     const collectionNFTs = rawNFTs.filter(nft =>
-      nft.Issuer === issuer && nft.NFTokenTaxon === taxon
+      nft.issuer === issuer && nft.nftokenTaxon === taxon
     );
 
     console.log(`✅ Found ${collectionNFTs.length} NFTs in collection`);
 
-    // Resolve metadata
-    const resolvedNFTs = await resolveNFTsBatch(collectionNFTs, batchSize);
-    console.log(`✅ Resolved metadata for collection NFTs`);
+    // Transform to standardized format
+    const transformedNFTs = collectionNFTs.map(transformNFT);
 
-    return resolvedNFTs;
+    return transformedNFTs;
   } catch (error) {
     console.error(`❌ Error loading collection NFTs:`, error);
     throw error;
@@ -179,31 +219,33 @@ export const loadCollectionNFTs = async (address, issuer, taxon, options = {}) =
  * Get single NFT with metadata (for compatibility)
  * @param {string} nftokenID - NFT Token ID
  * @param {string} ownerAddress - Owner address
- * @returns {Promise<Object>} Resolved NFT with Bithomp-compatible structure
+ * @returns {Promise<Object>} NFT with Bithomp-compatible structure
  */
 export const getNFTWithMetadata = async (nftokenID, ownerAddress) => {
   try {
     // Fetch all NFTs for owner (will be cached)
-    const rawNFTs = await getAllAccountNFTs(ownerAddress);
+    const result = await getAccountNFTs(ownerAddress, { assets: true });
+    const nfts = result.nfts || [];
 
     // Find specific NFT
-    const nft = rawNFTs.find(n => n.NFTokenID === nftokenID);
+    const nft = nfts.find(n => n.nftokenID === nftokenID);
 
     if (!nft) {
       throw new Error(`NFT ${nftokenID} not found in account ${ownerAddress}`);
     }
 
-    // Resolve metadata
-    const resolvedNFT = await resolveNFTsBatch([nft], 1);
+    // Transform and return in Bithomp-compatible format
+    const transformed = transformNFT(nft);
 
-    // Return in Bithomp-compatible format
     return {
-      nftokenID: resolvedNFT[0].nftokenID,
-      metadata: resolvedNFT[0].metadata,
+      nftokenID: transformed.nftokenID,
+      metadata: transformed.metadata,
       assets: {
-        image: resolvedNFT[0].image
+        image: transformed.image,
+        preview: transformed.assets?.preview,
+        thumbnail: transformed.thumbnail
       },
-      collection: resolvedNFT[0].collection
+      collection: transformed.collection
     };
   } catch (error) {
     console.error(`❌ Error getting NFT metadata:`, error);
@@ -212,28 +254,38 @@ export const getNFTWithMetadata = async (nftokenID, ownerAddress) => {
 };
 
 /**
- * Transform resolved NFT to Bithomp-compatible format
- * @param {Object} resolvedNFT - NFT with resolved metadata
+ * Transform NFT to Bithomp-compatible format (already compatible!)
+ * @param {Object} nft - Transformed NFT object
  * @returns {Object} Bithomp-compatible NFT object
  */
-export const toBithompFormat = (resolvedNFT) => {
+export const toBithompFormat = (nft) => {
   return {
-    nftokenID: resolvedNFT.nftokenID,
-    issuer: resolvedNFT.issuer,
-    taxon: resolvedNFT.taxon,
-    metadata: resolvedNFT.metadata,
+    nftokenID: nft.nftokenID,
+    issuer: nft.issuer,
+    taxon: nft.taxon,
+    nftokenTaxon: nft.taxon,
+    metadata: nft.metadata,
     assets: {
-      image: resolvedNFT.image,
-      imageOriginal: resolvedNFT.image
+      image: nft.image,
+      imageOriginal: nft.image,
+      preview: nft.thumbnail,
+      thumbnail: nft.thumbnail
     },
-    collection: resolvedNFT.collection || {
-      name: `Collection ${resolvedNFT.taxon}`
+    collection: nft.collection || {
+      name: `Collection ${nft.taxon}`
     },
-    uri: resolvedNFT.uri,
+    uri: nft.uri,
+    url: nft.uri,
     // Additional fields for compatibility
-    name: resolvedNFT.name,
-    description: resolvedNFT.description,
-    attributes: resolvedNFT.attributes
+    name: nft.name,
+    description: nft.description,
+    attributes: nft.attributes,
+    flags: nft.flags,
+    transferFee: nft.transferFee,
+    owner: nft.owner,
+    issuedAt: nft.issuedAt,
+    ownerChangedAt: nft.ownerChangedAt,
+    mintedByMarketplace: nft.mintedByMarketplace
   };
 };
 
