@@ -9,8 +9,8 @@
 
 import axios from 'axios';
 
-// Dhali XRPL Cluster Endpoint
-const DHALI_ENDPOINT = 'https://run.api.dhali.io/199fd80b-1776-4708-b1a1-4b2bb386435d/';
+// Dhali XRPL Cluster Endpoint (New REST API)
+const DHALI_ENDPOINT = 'https://run.api.dhali.io/d995db530-7e57-46d1-ac8a-76324794e0c9';
 // Payment claim from environment variable
 const getPaymentClaim = () => {
   const claim = process.env.REACT_APP_DHALI_PAYMENT_CLAIM;
@@ -21,61 +21,54 @@ const getPaymentClaim = () => {
 };
 
 /**
- * Core function to make Dhali API requests
- * @param {string} method - XRPL JSON-RPC method name
- * @param {Object} params - Parameters for the method
- * @returns {Promise<Object>} API response result
+ * Core function to make Dhali API requests (REST-style)
+ * @param {string} endpoint - API endpoint path (e.g., '/nfts', '/nft-offers')
+ * @param {Object} queryParams - Query parameters for the request
+ * @returns {Promise<Object>} API response data
  */
-export const callDhaliAPI = async (method, params) => {
+export const callDhaliAPI = async (endpoint, queryParams = {}) => {
   const paymentClaim = getPaymentClaim();
   if (!paymentClaim) {
     throw new Error('Dhali payment claim is not configured. Please set REACT_APP_DHALI_PAYMENT_CLAIM in your .env file');
   }
 
   try {
-    console.log(`📡 Calling Dhali API: ${method}`);
+    console.log(`📡 Calling Dhali API: ${endpoint}`);
 
-    const response = await axios.post(
-      DHALI_ENDPOINT,
-      {
-        method: method,
-        params: [params]
-      },
-      {
-        headers: {
-          'Payment-Claim': paymentClaim,
-          'Content-Type': 'application/json'
-        }
+    // Build query string
+    const queryString = Object.keys(queryParams)
+      .filter(key => queryParams[key] !== undefined && queryParams[key] !== null)
+      .map(key => `${encodeURIComponent(key)}=${encodeURIComponent(queryParams[key])}`)
+      .join('&');
+
+    const url = `${DHALI_ENDPOINT}${endpoint}${queryString ? `?${queryString}` : ''}`;
+
+    const response = await axios.get(url, {
+      headers: {
+        'Payment-Claim': paymentClaim,
+        'Content-Type': 'application/json'
       }
-    );
+    });
 
-    if (response.data.result) {
-      console.log(`✅ ${method} returned result`);
-      return response.data.result;
-    } else if (response.data.error) {
-      console.error(`❌ Dhali API Error (${method}):`, response.data.error);
-      throw new Error(`Dhali API Error: ${response.data.error.message || JSON.stringify(response.data.error)}`);
-    } else {
-      console.log(`⚠️  ${method} returned non-standard response`);
-      return response.data;
-    }
+    console.log(`✅ ${endpoint} returned result`);
+    return response.data;
   } catch (error) {
     // Handle 402 Payment Required specifically
     if (error.response?.status === 402) {
-      console.error(`❌ Dhali API Error (${method}): 402 Payment Required`);
+      console.error(`❌ Dhali API Error (${endpoint}): 402 Payment Required`);
       console.error('Payment claim insufficient. Error details:', error.response?.data);
       const detail = error.response?.data?.detail || 'Payment claim insufficient';
       throw new Error(`Dhali: ${detail}`);
     }
 
     if (error.response?.data?.error) {
-      console.error(`❌ Dhali API Error (${method}):`, error.response.data.error);
+      console.error(`❌ Dhali API Error (${endpoint}):`, error.response.data.error);
       throw new Error(`Dhali API: ${error.response.data.error.message || 'Unknown error'}`);
     } else if (error.response?.data?.detail) {
-      console.error(`❌ Dhali API Error (${method}):`, error.response.data.detail);
+      console.error(`❌ Dhali API Error (${endpoint}):`, error.response.data.detail);
       throw new Error(`Dhali: ${error.response.data.detail}`);
     } else {
-      console.error(`❌ Dhali API Error (${method}):`, error.message);
+      console.error(`❌ Dhali API Error (${endpoint}):`, error.message);
       throw error;
     }
   }
@@ -90,19 +83,25 @@ export const callDhaliAPI = async (method, params) => {
 export const getAccountNFTs = async (address, options = {}) => {
   const {
     limit = 400,
-    marker = undefined
+    marker = undefined,
+    assets = true
   } = options;
 
-  const params = {
-    account: address,
-    ledger_index: 'validated',
+  const queryParams = {
+    owner: address,
+    assets: assets,
     ...(limit && { limit }),
     ...(marker && { marker })
   };
 
   try {
-    const result = await callDhaliAPI('account_nfts', params);
-    return result;
+    const result = await callDhaliAPI('/nfts', queryParams);
+    // Transform to match old format if needed
+    return {
+      account: address,
+      account_nfts: result.nfts || result,
+      ...(result.marker && { marker: result.marker })
+    };
   } catch (error) {
     console.error(`❌ Error fetching NFTs for ${address}:`, error);
     throw error;
@@ -149,20 +148,19 @@ export const getAllAccountNFTs = async (address, maxNFTs = 400) => {
  */
 export const getNFTSellOffers = async (nftokenID) => {
   try {
-    const result = await callDhaliAPI('nft_sell_offers', {
-      nft_id: nftokenID,
-      ledger_index: 'validated'
+    const result = await callDhaliAPI('/nft-sell-offers', {
+      nft_id: nftokenID
     });
 
     // Ensure offers array exists
     if (result && !result.offers) {
-      result.offers = [];
+      result.offers = result.sell_offers || [];
     }
 
     return result;
   } catch (error) {
     // NFT might not have any sell offers
-    if (error.message?.includes('objectNotFound') || error.message?.includes('not found')) {
+    if (error.message?.includes('objectNotFound') || error.message?.includes('not found') || error.response?.status === 404) {
       return { offers: [] };
     }
     console.error(`❌ Error getting sell offers for ${nftokenID}:`, error);
@@ -177,20 +175,19 @@ export const getNFTSellOffers = async (nftokenID) => {
  */
 export const getNFTBuyOffers = async (nftokenID) => {
   try {
-    const result = await callDhaliAPI('nft_buy_offers', {
-      nft_id: nftokenID,
-      ledger_index: 'validated'
+    const result = await callDhaliAPI('/nft-buy-offers', {
+      nft_id: nftokenID
     });
 
     // Ensure offers array exists
     if (result && !result.offers) {
-      result.offers = [];
+      result.offers = result.buy_offers || [];
     }
 
     return result;
   } catch (error) {
     // NFT might not have any buy offers
-    if (error.message?.includes('objectNotFound') || error.message?.includes('not found')) {
+    if (error.message?.includes('objectNotFound') || error.message?.includes('not found') || error.response?.status === 404) {
       return { offers: [] };
     }
     console.error(`❌ Error getting buy offers for ${nftokenID}:`, error);
@@ -240,16 +237,15 @@ export const getAccountObjects = async (address, options = {}) => {
     marker = undefined
   } = options;
 
-  const params = {
+  const queryParams = {
     account: address,
-    ledger_index: 'validated',
     ...(type && { type }),
     ...(limit && { limit }),
     ...(marker && { marker })
   };
 
   try {
-    const result = await callDhaliAPI('account_objects', params);
+    const result = await callDhaliAPI('/account-objects', queryParams);
     return result;
   } catch (error) {
     console.error(`❌ Error fetching account objects for ${address}:`, error);
@@ -300,9 +296,8 @@ export const getAccountNFTOffers = async (address) => {
  */
 export const getAccountInfo = async (address) => {
   try {
-    const result = await callDhaliAPI('account_info', {
-      account: address,
-      ledger_index: 'validated'
+    const result = await callDhaliAPI('/account-info', {
+      account: address
     });
     return result;
   } catch (error) {
@@ -325,7 +320,7 @@ export const getAccountTransactions = async (address, options = {}) => {
     maxLedger = undefined
   } = options;
 
-  const params = {
+  const queryParams = {
     account: address,
     ...(limit && { limit }),
     ...(marker && { marker }),
@@ -334,7 +329,7 @@ export const getAccountTransactions = async (address, options = {}) => {
   };
 
   try {
-    const result = await callDhaliAPI('account_tx', params);
+    const result = await callDhaliAPI('/account-transactions', queryParams);
     return result;
   } catch (error) {
     console.error(`❌ Error fetching transactions for ${address}:`, error);
@@ -348,9 +343,7 @@ export const getAccountTransactions = async (address, options = {}) => {
  */
 export const getLedgerInfo = async () => {
   try {
-    const result = await callDhaliAPI('ledger', {
-      ledger_index: 'validated'
-    });
+    const result = await callDhaliAPI('/ledger', {});
     return result;
   } catch (error) {
     console.error('❌ Error fetching ledger info:', error);
