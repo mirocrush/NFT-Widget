@@ -252,23 +252,35 @@ const MatrixClientProvider = () => {
     try {
       console.log('📦 Loading collections from Dhali for:', walletAddress);
 
-      // ✅ Use new Dhali service (NFTs already transformed!)
+      // Use Dhali service to load collections with metadata resolution
       const dhaliResult = await loadDhaliCollections(walletAddress, {
-        limit: 400,
+        maxNFTs: 400,
+        batchSize: 5,
         useCache: true
       });
 
+      // Transform Dhali format to match existing UI expectations
       const { collections: dhaliCollections, allNFTs } = dhaliResult;
 
-      // ✅ Build nftsByKey - NFTs are already transformed!
+      // Build nftsByKey in the format expected by UI: { "issuer-taxon": [nfts] }
       const nftsByKey = {};
       allNFTs.forEach(nft => {
-        const issuer = nft.issuer || nft.Issuer;
-        const taxon = nft.nftokenTaxon || nft.NFTokenTaxon;
-        const key = `${issuer}-${taxon}`;
+        const key = `${nft.issuer}-${nft.taxon}`;
+        const imageURI = nft.image || nft.metadata?.image || "";
 
         if (!nftsByKey[key]) nftsByKey[key] = [];
-        nftsByKey[key].push(nft); // Already has imageURI, metadata, etc!
+        nftsByKey[key].push({
+          nftokenID: nft.nftokenID,
+          issuer: nft.issuer,
+          nftokenTaxon: nft.taxon,
+          imageURI,
+          metadata: nft.metadata,
+          assets: { image: nft.image },
+          collectionName: nft.collection?.name || nft.metadata?.name || `Collection ${nft.taxon}`,
+          name: nft.name,
+          description: nft.description,
+          uri: nft.uri
+        });
       });
 
       // Build collection summaries from dhaliCollections
@@ -312,9 +324,10 @@ const MatrixClientProvider = () => {
     try {
       console.log(`📦 Loading collection NFTs from Dhali for ${issuer}-${nftokenTaxon}`);
 
-      // ✅ Load from new Dhali API (cached, so fast on subsequent calls)
+      // Load all user collections from Dhali (cached, so fast on subsequent calls)
       const dhaliResult = await loadDhaliCollections(walletAddress, {
-        limit: 400,
+        maxNFTs: 400,
+        batchSize: 5,
         useCache: true
       });
 
@@ -323,26 +336,31 @@ const MatrixClientProvider = () => {
       // Filter NFTs by issuer and taxon if provided
       let filteredNfts = allNFTs;
       if (issuer && nftokenTaxon !== null) {
-        filteredNfts = allNFTs.filter((nft) => {
-          const nftIssuer = nft.issuer || nft.Issuer;
-          const nftTaxon = nft.nftokenTaxon || nft.NFTokenTaxon;
-          return nftIssuer === issuer && nftTaxon === nftokenTaxon;
-        });
+        filteredNfts = allNFTs.filter((nft) => nft.issuer === issuer && nft.taxon === nftokenTaxon);
       } else if (collectionName) {
         filteredNfts = allNFTs.filter((nft) => {
-          const nftCollectionName = nft.collectionName || nft.collection?.name || nft.metadata?.collection?.name;
+          const nftCollectionName = nft.collection?.name || nft.metadata?.collection?.name;
           return nftCollectionName === collectionName;
         });
       }
 
-      // ✅ NFTs are already transformed! Just use them directly
+      // Transform to UI-compatible format
       const enrichedNfts = filteredNfts.map((nft) => {
+        const imageURI = nft.image || nft.metadata?.image || "";
         return {
-          ...nft, // ✅ Already has all transformed fields!
+          nftokenID: nft.nftokenID,
+          issuer: nft.issuer,
+          nftokenTaxon: nft.taxon,
+          imageURI,
+          metadata: nft.metadata,
+          assets: { image: nft.image },
+          uri: nft.uri,
+          name: nft.name,
+          description: nft.description,
           userName,
           userId,
-          ownerUsername: null,
-          collectionName: nft.collectionName || collectionName
+          ownerUsername: null, // Dhali doesn't provide owner details
+          collectionName: nft.collection?.name || collectionName,
         };
       });
 
