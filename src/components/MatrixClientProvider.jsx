@@ -14,7 +14,7 @@ import ImageCacheDebugPanel from "./ImageCacheDebugPanel";
 import { Package } from "lucide-react";
 import { useTheme } from "../context/ThemeContext";
 import imageCache from "../services/imageCache";
-import { loadUserCollections as loadDhaliCollections } from "../services/nftCollectionService";
+import { loadUserCollections as loadDhaliRestCollections } from "../services/dhaliRestService";
 
 const getImageData = async (nft) => {
   // Extract metadata and image from resolved NFT data
@@ -250,56 +250,16 @@ const MatrixClientProvider = () => {
   // Function to load collections metadata AND the user's NFTs grouped by collection
   const loadUserCollections = async (walletAddress) => {
     try {
-      console.log('📦 Loading collections from Dhali for:', walletAddress);
+      console.log('📦 Loading collections from Dhali REST API for:', walletAddress);
 
-      // Use Dhali service to load collections with metadata resolution
-      const dhaliResult = await loadDhaliCollections(walletAddress, {
-        maxNFTs: 400,
-        batchSize: 5,
-        useCache: true
-      });
+      // 🚀 NEW: Use Dhali REST API - returns pre-resolved metadata and CDN images!
+      // No IPFS calls, no metadata resolution, instant response!
+      const { collections, nftsByKey } = await loadDhaliRestCollections(walletAddress);
 
-      // Transform Dhali format to match existing UI expectations
-      const { collections: dhaliCollections, allNFTs } = dhaliResult;
-
-      // Build nftsByKey in the format expected by UI: { "issuer-taxon": [nfts] }
-      const nftsByKey = {};
-      allNFTs.forEach(nft => {
-        const key = `${nft.issuer}-${nft.taxon}`;
-        const imageURI = nft.image || nft.metadata?.image || "";
-
-        if (!nftsByKey[key]) nftsByKey[key] = [];
-        nftsByKey[key].push({
-          nftokenID: nft.nftokenID,
-          issuer: nft.issuer,
-          nftokenTaxon: nft.taxon,
-          imageURI,
-          metadata: nft.metadata,
-          assets: { image: nft.image },
-          collectionName: nft.collection?.name || nft.metadata?.name || `Collection ${nft.taxon}`,
-          name: nft.name,
-          description: nft.description,
-          uri: nft.uri
-        });
-      });
-
-      // Build collection summaries from dhaliCollections
-      const collections = Object.entries(dhaliCollections).map(([key, collection]) => {
-        return {
-          name: collection.collectionName,
-          issuer: collection.issuer,
-          nftokenTaxon: collection.taxon,
-          collectionKey: key,
-          nftCount: collection.count,
-          sampleNft: nftsByKey[key]?.[0] || null,
-          sampleImage: collection.sampleImage,
-        };
-      });
-
-      console.log(`✅ Loaded ${collections.length} collections from Dhali`);
+      console.log(`✅ Loaded ${collections.length} collections from Dhali REST API (FAST!)`);
       return { collections, nftsByKey };
     } catch (error) {
-      console.error(`❌ Error fetching collections from Dhali for ${walletAddress}:`, error.message);
+      console.error(`❌ Error fetching collections from Dhali REST API for ${walletAddress}:`, error.message);
       return { collections: [], nftsByKey: {} };
     }
   };
@@ -322,47 +282,38 @@ const MatrixClientProvider = () => {
     setLoadingCollections((prev) => ({ ...prev, [cacheKey]: true }));
 
     try {
-      console.log(`📦 Loading collection NFTs from Dhali for ${issuer}-${nftokenTaxon}`);
+      console.log(`📦 Loading collection NFTs from Dhali REST API for ${issuer}-${nftokenTaxon}`);
 
-      // Load all user collections from Dhali (cached, so fast on subsequent calls)
-      const dhaliResult = await loadDhaliCollections(walletAddress, {
-        maxNFTs: 400,
-        batchSize: 5,
-        useCache: true
-      });
+      // 🚀 NEW: Load from Dhali REST API - already has metadata and images!
+      const { nftsByKey } = await loadDhaliRestCollections(walletAddress);
 
-      const { allNFTs } = dhaliResult;
+      // Get NFTs for this specific collection
+      const collectionKey = issuer && nftokenTaxon !== null
+        ? `${issuer}-${nftokenTaxon}`
+        : null;
 
-      // Filter NFTs by issuer and taxon if provided
-      let filteredNfts = allNFTs;
-      if (issuer && nftokenTaxon !== null) {
-        filteredNfts = allNFTs.filter((nft) => nft.issuer === issuer && nft.taxon === nftokenTaxon);
-      } else if (collectionName) {
-        filteredNfts = allNFTs.filter((nft) => {
-          const nftCollectionName = nft.collection?.name || nft.metadata?.collection?.name;
-          return nftCollectionName === collectionName;
-        });
-      }
+      let enrichedNfts = [];
 
-      // Transform to UI-compatible format
-      const enrichedNfts = filteredNfts.map((nft) => {
-        const imageURI = nft.image || nft.metadata?.image || "";
-        return {
-          nftokenID: nft.nftokenID,
-          issuer: nft.issuer,
-          nftokenTaxon: nft.taxon,
-          imageURI,
-          metadata: nft.metadata,
-          assets: { image: nft.image },
-          uri: nft.uri,
-          name: nft.name,
-          description: nft.description,
+      if (collectionKey && nftsByKey[collectionKey]) {
+        // Direct lookup by collection key
+        enrichedNfts = nftsByKey[collectionKey].map(nft => ({
+          ...nft,
           userName,
           userId,
-          ownerUsername: null, // Dhali doesn't provide owner details
-          collectionName: nft.collection?.name || collectionName,
-        };
-      });
+          ownerUsername: null,
+        }));
+      } else if (collectionName) {
+        // Search by collection name across all collections
+        enrichedNfts = Object.values(nftsByKey)
+          .flat()
+          .filter(nft => nft.collectionName === collectionName)
+          .map(nft => ({
+            ...nft,
+            userName,
+            userId,
+            ownerUsername: null,
+          }));
+      }
 
       // Preload images for better UX
       const imageUrls = enrichedNfts.map((nft) => nft.imageURI).filter((url) => url && url.trim() !== "");

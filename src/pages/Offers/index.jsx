@@ -6,7 +6,7 @@ import OfferReceivedToggle from "../../components/OfferReceivedToggle";
 import API_URLS from "../../config";
 import LoadingOverlay from "../../components/LoadingOverlay";
 import { Briefcase, RefreshCcw, Package } from "lucide-react";
-import { getAllNFTOffersFromXRPLData as getAllNFTOffers } from "../../services/xrplService";
+import { getAllNFTOffersForAddress as getAllNFTOffers } from "../../services/dhaliRestService";
 
 const Offers = ({
   membersList,
