@@ -124,6 +124,26 @@ export const getNFTOffers = async (address, options = {}) => {
 };
 
 /**
+ * Extract collection name from NFT name
+ * Smart logic: "X-Shaman #2341" → "X-Shaman"
+ * @param {string} nftName - Individual NFT name
+ * @returns {string} Collection name
+ */
+const extractCollectionName = (nftName) => {
+  if (!nftName) return null;
+
+  // Split by "#" and take the first part
+  const baseName = nftName.split('#')[0].trim();
+
+  // If we got something meaningful, return it
+  if (baseName && baseName.length > 0) {
+    return baseName;
+  }
+
+  return null;
+};
+
+/**
  * Transform Dhali REST NFT response to match existing app structure
  * @param {Object} dhaliResponse - Response from Dhali REST API
  * @param {string} userName - User's display name
@@ -139,9 +159,18 @@ export const transformNFTResponse = (dhaliResponse, userName, userId) => {
 
   // Build nftsByKey: { "issuer-taxon": [nfts] }
   const nftsByKey = {};
+  const collectionNames = {}; // Track collection name for each key
+
   allNfts.forEach(nft => {
     const key = `${nft.issuer}-${nft.nftokenTaxon}`;
     const imageURI = nft.assets?.image || nft.metadata?.image || "";
+    const nftName = nft.metadata?.name || "Unnamed NFT";
+
+    // Extract collection name from first NFT in collection
+    if (!collectionNames[key]) {
+      const extracted = extractCollectionName(nftName);
+      collectionNames[key] = extracted || `Collection ${nft.nftokenTaxon}`;
+    }
 
     if (!nftsByKey[key]) nftsByKey[key] = [];
     nftsByKey[key].push({
@@ -151,8 +180,8 @@ export const transformNFTResponse = (dhaliResponse, userName, userId) => {
       imageURI,
       metadata: nft.metadata,
       assets: nft.assets,
-      collectionName: nft.collection || `Collection ${nft.nftokenTaxon}`,
-      name: nft.metadata?.name || "Unnamed NFT",
+      collectionName: collectionNames[key], // Use extracted collection name
+      name: nftName,
       description: nft.metadata?.description || "",
       uri: nft.url,
       owner: nft.owner,
@@ -166,7 +195,7 @@ export const transformNFTResponse = (dhaliResponse, userName, userId) => {
   const collections = Object.entries(nftsByKey).map(([key, nfts]) => {
     const sample = nfts[0];
     return {
-      name: sample.collectionName,
+      name: collectionNames[key], // Use extracted collection name
       issuer: sample.issuer,
       nftokenTaxon: sample.nftokenTaxon,
       collectionKey: key,
