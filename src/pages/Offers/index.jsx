@@ -6,7 +6,8 @@ import OfferReceivedToggle from "../../components/OfferReceivedToggle";
 import API_URLS from "../../config";
 import LoadingOverlay from "../../components/LoadingOverlay";
 import { Briefcase, RefreshCcw, Package } from "lucide-react";
-import { getAllNFTOffersForAddress as getAllNFTOffers } from "../../services/dhaliRestService";
+import { getAllNFTOffersFromXRPLData as getAllNFTOffers } from "../../services/xrplService";
+import { getNFTsByOwner } from "../../services/dhaliRestService";
 
 const Offers = ({
   membersList,
@@ -334,7 +335,38 @@ const Offers = ({
         walletNftMap[wallet] = new Set(nftIds);
       });
 
-      console.log('📋 Built NFT metadata map with', nftMapById.size, 'NFTs');
+      console.log('📋 Built NFT metadata map with', nftMapById.size, 'NFTs from myNftData');
+
+      // STEP 1.5: 🚀 Fetch additional NFT metadata from Dhali REST API
+      // This enriches NFTs that might not be in myNftData
+      try {
+        console.log('📡 Fetching NFT metadata from Dhali REST API for:', myWalletAddress);
+        const dhaliResponse = await getNFTsByOwner(myWalletAddress, {
+          assets: true,
+          limit: 400
+        });
+
+        // Add Dhali NFTs to the map (if not already present)
+        if (dhaliResponse?.nfts) {
+          dhaliResponse.nfts.forEach((nft) => {
+            if (!nftMapById.has(nft.nftokenID)) {
+              nftMapById.set(nft.nftokenID, {
+                nftokenID: nft.nftokenID,
+                imageURI: nft.assets?.image || nft.metadata?.image || "",
+                metadata: nft.metadata,
+                assets: nft.assets,
+                name: nft.metadata?.name || "Unnamed NFT",
+                issuer: nft.issuer,
+                nftokenTaxon: nft.nftokenTaxon
+              });
+            }
+          });
+          console.log('✅ Enriched NFT map with Dhali data. Total NFTs:', nftMapById.size);
+        }
+      } catch (dhaliError) {
+        console.warn('⚠️ Could not fetch from Dhali REST API:', dhaliError.message);
+        console.log('📋 Continuing with myNftData only...');
+      }
 
       // STEP 2: Fetch offers from xrpldata API
       const data = await getAllNFTOffers(myWalletAddress);
