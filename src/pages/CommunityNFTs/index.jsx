@@ -4,7 +4,7 @@ import nft_pic from "../../assets/nft.png";
 import { useCachedImage, useImagePreloader } from "../../hooks/useCachedImage";
 import NFTModal from "../../components/NFTModal";
 
-const CommunityNFTs = ({ membersList, myNftData, wgtParameters, refreshOffers, widgetApi, loadCollectionNFTs }) => {
+const CommunityNFTs = ({ membersList, myNftData, wgtParameters, refreshOffers, widgetApi, loadCollectionNFTs, loadMoreUsers, loadedUsersCount, totalUsersCount, isLoadingMore }) => {
   const [selectedCollection, setSelectedCollection] = useState(null);
   const [selectedNFT, setSelectedNFT] = useState(null);
   const [isNFTModalOpen, setIsNFTModalOpen] = useState(false);
@@ -266,9 +266,32 @@ const CommunityNFTs = ({ membersList, myNftData, wgtParameters, refreshOffers, w
               <p className="text-gray-600 dark:text-gray-400 max-w-md">
                 {searchTerm
                   ? "Try a different owner name."
-                  : "Other members haven’t shared NFT collections yet."}
+                  : "Other members haven't shared NFT collections yet."}
               </p>
             </div>
+          </div>
+        )}
+
+        {/* Load More Users Button */}
+        {loadMoreUsers && loadedUsersCount < totalUsersCount && (
+          <div className="flex justify-center items-center mt-6 pb-4">
+            <button
+              onClick={loadMoreUsers}
+              disabled={isLoadingMore}
+              className="px-6 py-3 bg-gradient-to-br from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 disabled:from-gray-400 disabled:to-gray-500 text-white font-semibold rounded-lg shadow-md transition-all duration-200 flex items-center gap-2"
+            >
+              {isLoadingMore ? (
+                <>
+                  <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                  <span>Loading more users...</span>
+                </>
+              ) : (
+                <>
+                  <Package className="w-5 h-5" />
+                  <span>Load More Users ({loadedUsersCount} of {totalUsersCount} loaded)</span>
+                </>
+              )}
+            </button>
           </div>
         )}
       </div>

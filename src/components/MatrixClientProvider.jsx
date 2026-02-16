@@ -246,6 +246,10 @@ const MatrixClientProvider = () => {
   const [loadedCollections, setLoadedCollections] = useState({}); // Cache for loaded NFTs by collection
   const [loadingCollections, setLoadingCollections] = useState({}); // Track loading state per collection
   const [showCacheDebug, setShowCacheDebug] = useState(false); // Debug panel toggle
+  const [loadingProgress, setLoadingProgress] = useState({ current: 0, total: 0, userName: '' }); // Track sequential loading progress
+  const [allUsersList, setAllUsersList] = useState([]); // Store all users for pagination
+  const [loadedUsersCount, setLoadedUsersCount] = useState(0); // Track how many users have been loaded
+  const [isLoadingMore, setIsLoadingMore] = useState(false); // Track if loading more users
 
   // Function to load collections metadata AND the user's NFTs grouped by collection
   const loadUserCollections = async (walletAddress) => {
@@ -338,6 +342,89 @@ const MatrixClientProvider = () => {
     }
   };
 
+  // Function to load more users (next page)
+  const loadMoreUsers = async () => {
+    if (isLoadingMore) return; // Prevent duplicate loads
+
+    const USERS_PER_PAGE = 10;
+    const nextBatchStart = loadedUsersCount;
+    const nextBatchEnd = Math.min(nextBatchStart + USERS_PER_PAGE, allUsersList.length);
+
+    if (nextBatchStart >= allUsersList.length) {
+      console.log('✅ All users already loaded');
+      return;
+    }
+
+    setIsLoadingMore(true);
+    const nextBatch = allUsersList.slice(nextBatchStart, nextBatchEnd);
+    console.log(`🚀 Loading users ${nextBatchStart + 1} to ${nextBatchEnd} of ${allUsersList.length}...`);
+
+    const newUsersData = [];
+
+    for (let i = 0; i < nextBatch.length; i++) {
+      const member = nextBatch[i];
+
+      try {
+        setLoadingProgress({
+          current: i + 1,
+          total: nextBatch.length,
+          userName: member.name || 'Unknown User'
+        });
+
+        console.log(`📦 Loading ${nextBatchStart + i + 1}/${allUsersList.length}: ${member.name}`);
+
+        const walletAddress = member.userId.split(":")[0].replace("@", "");
+        const { collections, nftsByKey } = await loadUserCollections(walletAddress);
+
+        const groupedNfts = collections.map((collection) => ({
+          collection: collection.name || "Unknown Collection",
+          collectionKey: collection.collectionKey,
+          issuer: collection.issuer,
+          nftokenTaxon: collection.nftokenTaxon,
+          nfts: (nftsByKey[collection.collectionKey] || []).map((nft) => ({
+            ...nft,
+            userName: member.name,
+            userId: member.userId,
+          })),
+          nftCount: collection.nftCount || (nftsByKey[collection.collectionKey]?.length || 0),
+          collectionInfo: collection,
+        }));
+
+        const userData = {
+          ...member,
+          walletAddress,
+          groupedNfts,
+        };
+
+        newUsersData.push(userData);
+
+        // Update UI progressively
+        setMyNftData(prev => [...prev, ...newUsersData]);
+
+        // Add delay to prevent 429 errors
+        if (i < nextBatch.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 800));
+        }
+
+      } catch (error) {
+        console.error(`❌ Failed to load NFTs for ${member.name}:`, error);
+        newUsersData.push({
+          ...member,
+          walletAddress: member.userId.split(":")[0].replace("@", ""),
+          groupedNfts: [],
+          error: error.message
+        });
+      }
+    }
+
+    setMyNftData(prev => [...prev, ...newUsersData]);
+    setLoadedUsersCount(prev => prev + newUsersData.length);
+    setLoadingProgress({ current: 0, total: 0, userName: '' });
+    setIsLoadingMore(false);
+
+    console.log(`✅ Loaded ${loadedUsersCount + newUsersData.length} of ${allUsersList.length} users`);
+  };
+
   useEffect(() => {
     const loadData = async () => {
       setLoading(true);
@@ -382,11 +469,28 @@ const MatrixClientProvider = () => {
         console.log("Connected to XRPL");
         setClient(client_);
         setMembersList(usersList);
+        setAllUsersList(usersList); // Store all users for pagination
 
-        // Load collections for each user instead of all NFTs
-        console.log("🚀 Loading collections for all users...");
-        const usersWithCollections = await Promise.all(
-          usersList.map(async (member) => {
+        // Pagination: Load only first 10 users initially to prevent long wait times
+        const USERS_PER_PAGE = 10;
+        const initialUsersToLoad = usersList.slice(0, USERS_PER_PAGE);
+
+        console.log(`🚀 Loading first ${initialUsersToLoad.length} of ${usersList.length} users sequentially...`);
+        const usersWithCollections = [];
+
+        for (let i = 0; i < initialUsersToLoad.length; i++) {
+          const member = initialUsersToLoad[i];
+
+          try {
+            // Update loading progress
+            setLoadingProgress({
+              current: i + 1,
+              total: initialUsersToLoad.length,
+              userName: member.name || 'Unknown User'
+            });
+
+            console.log(`📦 Loading ${i + 1}/${initialUsersToLoad.length}: ${member.name}`);
+
             const walletAddress = member.userId.split(":")[0].replace("@", "");
             const { collections, nftsByKey } = await loadUserCollections(walletAddress);
 
@@ -405,16 +509,41 @@ const MatrixClientProvider = () => {
               collectionInfo: collection,
             }));
 
-            return {
+            const userData = {
               ...member,
               walletAddress,
               groupedNfts,
             };
-          })
-        );
 
-        console.log("✅ All users with collections:", usersWithCollections);
+            usersWithCollections.push(userData);
+
+            // Update UI progressively (show NFTs as they load)
+            setMyNftData([...usersWithCollections]);
+
+            // CRITICAL: Add delay between requests to prevent 429 errors
+            // Only add delay if not the last user
+            if (i < initialUsersToLoad.length - 1) {
+              await new Promise(resolve => setTimeout(resolve, 800)); // 800ms delay
+            }
+
+          } catch (error) {
+            console.error(`❌ Failed to load NFTs for ${member.name}:`, error);
+            // Continue loading other users even if one fails
+            usersWithCollections.push({
+              ...member,
+              walletAddress: member.userId.split(":")[0].replace("@", ""),
+              groupedNfts: [],
+              error: error.message
+            });
+          }
+        }
+
+        console.log(`✅ Loaded ${usersWithCollections.length} of ${usersList.length} users`);
         setMyNftData(usersWithCollections);
+        setLoadedUsersCount(usersWithCollections.length);
+
+        // Reset loading progress
+        setLoadingProgress({ current: 0, total: 0, userName: '' });
 
         // Preload collection sample images for better UX
         const sampleImages = usersWithCollections
@@ -681,7 +810,13 @@ const MatrixClientProvider = () => {
   return (
     <div className="min-h-screen bg-gradient-to-br from-white/90 to-blue-50/90 dark:from-gray-900/90 dark:to-gray-800/90 backdrop-blur-sm">
       {loading ? (
-        <LoadingOverlay message="Loading..." />
+        <LoadingOverlay
+          message={
+            loadingProgress.total > 0
+              ? `Loading ${loadingProgress.current}/${loadingProgress.total}: ${loadingProgress.userName}`
+              : "Loading..."
+          }
+        />
       ) : (
         <div className="h-screen flex flex-col">
           {/* Header */}
@@ -784,6 +919,10 @@ const MatrixClientProvider = () => {
                     widgetApi={widgetApi}
                     loadCollectionNFTs={handleLoadCollectionNFTs}
                     loadingCollections={loadingCollections}
+                    loadMoreUsers={loadMoreUsers}
+                    loadedUsersCount={loadedUsersCount}
+                    totalUsersCount={allUsersList.length}
+                    isLoadingMore={isLoadingMore}
                   />
                 </motion.div>
               )}
