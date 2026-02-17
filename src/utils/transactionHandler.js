@@ -26,7 +26,24 @@ export const isQRResponse = (data) => {
  * Backend returns unsigned tx that must be signed via Crossmark browser extension
  */
 export const isCrossmarkResponse = (data) => {
-  return data?.result === "Success" && data?.wallet_provider === "crossmark" && data?.transaction;
+  // Handle any casing: "crossmark", "Crossmark", "CROSSMARK"
+  const provider = (data?.wallet_provider || data?.walletProvider || "").toLowerCase();
+  const isCrossmark = provider === "crossmark";
+  const hasUnsignedTx = !!data?.transaction && !data?.txHash; // has tx but no hash yet
+
+  console.log("🔍 [isCrossmarkResponse] check:", {
+    result: data?.result,
+    wallet_provider: data?.wallet_provider,
+    walletProvider: data?.walletProvider,
+    providerNormalized: provider,
+    isCrossmark,
+    hasTransaction: !!data?.transaction,
+    hasTxHash: !!data?.txHash,
+    hasUnsignedTx,
+    decision: data?.result === "Success" && isCrossmark && hasUnsignedTx,
+  });
+
+  return data?.result === "Success" && isCrossmark && hasUnsignedTx;
 };
 
 /**
@@ -44,44 +61,70 @@ export const isInsufficientCredit = (data) => {
  * @throws {Error} If Crossmark is not installed, user rejects, or tx fails
  */
 export const signWithCrossmark = async (transaction) => {
+  console.log("🔐 [signWithCrossmark] Starting...");
+  console.log("🔐 [signWithCrossmark] window.xrpl:", window.xrpl);
+  console.log("🔐 [signWithCrossmark] window.xrpl?.crossmark:", window.xrpl?.crossmark);
+  console.log("🔐 [signWithCrossmark] transaction:", transaction);
+
   // Check if Crossmark extension is installed
   if (!window.xrpl?.crossmark) {
+    console.error("❌ [signWithCrossmark] Crossmark not found on window.xrpl.crossmark");
     throw new Error(
       "Crossmark wallet extension is not installed. Please install it from https://crossmark.io"
     );
   }
 
-  return new Promise((resolve, reject) => {
-    // Crossmark SDK: signAndSubmit sends tx to extension popup for user to sign
-    window.xrpl.crossmark.signAndSubmit(transaction, (error, response) => {
-      if (error) {
-        reject(new Error(error?.message || "Crossmark signing failed"));
-        return;
-      }
+  console.log("✅ [signWithCrossmark] Crossmark found, calling signAndSubmit...");
 
-      // User rejected the transaction in the extension
-      if (response?.type === "reject" || response?.cancelled) {
-        reject(new Error("Transaction was rejected in Crossmark wallet"));
-        return;
-      }
+  try {
+    // Crossmark SDK uses Promise-based API (not callbacks)
+    const response = await window.xrpl.crossmark.signAndSubmit(transaction);
 
-      // Extract tx result from response
-      const txResult = response?.response?.data?.resp?.result;
-      const txMeta = txResult?.meta;
+    console.log("📦 [signWithCrossmark] Raw response from Crossmark:", response);
+    console.log("📦 [signWithCrossmark] response.type:", response?.type);
+    console.log("📦 [signWithCrossmark] response.response:", response?.response);
+    console.log("📦 [signWithCrossmark] response.response?.data:", response?.response?.data);
+    console.log("📦 [signWithCrossmark] response.response?.data?.resp:", response?.response?.data?.resp);
 
-      if (txMeta?.TransactionResult !== "tesSUCCESS") {
-        reject(
-          new Error(
-            `Transaction failed on ledger: ${txMeta?.TransactionResult || "Unknown error"}`
-          )
-        );
-        return;
-      }
+    // User rejected the transaction in the extension
+    if (response?.type === "reject" || response?.cancelled || response?.response?.type === "reject") {
+      console.warn("⚠️ [signWithCrossmark] Transaction rejected by user");
+      throw new Error("Transaction was rejected in Crossmark wallet");
+    }
 
-      const txHash = txResult?.hash || response?.response?.data?.resp?.result?.hash;
-      resolve({ txHash });
-    });
-  });
+    // Try multiple response paths Crossmark may use
+    const resp = response?.response?.data?.resp;
+    const txResult = resp?.result ?? resp;
+    const txMeta = txResult?.meta ?? response?.response?.data?.meta;
+
+    console.log("📦 [signWithCrossmark] txResult:", txResult);
+    console.log("📦 [signWithCrossmark] txMeta:", txMeta);
+    console.log("📦 [signWithCrossmark] TransactionResult:", txMeta?.TransactionResult);
+
+    if (txMeta?.TransactionResult && txMeta.TransactionResult !== "tesSUCCESS") {
+      console.error("❌ [signWithCrossmark] Transaction failed on ledger:", txMeta.TransactionResult);
+      throw new Error(`Transaction failed on ledger: ${txMeta.TransactionResult}`);
+    }
+
+    // Extract hash from various possible locations
+    const txHash =
+      txResult?.hash ||
+      txResult?.Hash ||
+      response?.response?.data?.hash ||
+      response?.hash;
+
+    console.log("✅ [signWithCrossmark] Transaction successful! txHash:", txHash);
+    return { txHash, response };
+
+  } catch (error) {
+    // Re-throw errors we threw ourselves
+    if (error.message?.includes("rejected") || error.message?.includes("failed on ledger")) {
+      throw error;
+    }
+    // Wrap unexpected errors
+    console.error("❌ [signWithCrossmark] Unexpected error:", error);
+    throw new Error(error?.message || "Crossmark signing failed");
+  }
 };
 
 /**
@@ -119,8 +162,20 @@ export const handleTransactionRequest = async ({
     const data = await response.json();
     setLoading?.(false);
 
+    // ── DEBUG: Log the full raw response ──────────────────────────────────────
+    console.log("📡 [handleTransactionRequest] Raw backend response:", data);
+    console.log("📡 [handleTransactionRequest] data.result:", data?.result);
+    console.log("📡 [handleTransactionRequest] data.wallet_provider:", data?.wallet_provider);
+    console.log("📡 [handleTransactionRequest] data.walletProvider:", data?.walletProvider);
+    console.log("📡 [handleTransactionRequest] data.txHash:", data?.txHash);
+    console.log("📡 [handleTransactionRequest] data.transaction:", !!data?.transaction);
+    console.log("📡 [handleTransactionRequest] data.refs:", data?.refs);
+    // ─────────────────────────────────────────────────────────────────────────
+
     // Check for Crossmark unsigned transaction (before general success check)
+    console.log("🔎 [handleTransactionRequest] Testing isCrossmarkResponse...");
     if (isCrossmarkResponse(data)) {
+      console.log("✅ [handleTransactionRequest] → Crossmark path triggered");
       onCrossmarkRequired?.({
         transaction: data.transaction,
         operationId: data.operation_id,
@@ -132,7 +187,14 @@ export const handleTransactionRequest = async ({
     }
 
     // Check for success response with transaction details
+    console.log("🔎 [handleTransactionRequest] Testing isSuccessResponse...", {
+      hasResult: data?.result === "Success",
+      hasMessage: !!data?.message,
+      hasTxHash: !!data?.txHash,
+      hasTransaction: !!data?.transaction,
+    });
     if (isSuccessResponse(data)) {
+      console.log("✅ [handleTransactionRequest] → Direct success path triggered");
       onSuccess?.({
         message: data.message,
         txHash: data.txHash,
@@ -143,13 +205,17 @@ export const handleTransactionRequest = async ({
     }
 
     // Check for insufficient credits
+    console.log("🔎 [handleTransactionRequest] Testing isInsufficientCredit...", data?.result);
     if (isInsufficientCredit(data)) {
+      console.log("✅ [handleTransactionRequest] → Insufficient credit path triggered");
       onInsufficientCredit?.();
       return data;
     }
 
     // Check for QR code response
+    console.log("🔎 [handleTransactionRequest] Testing isQRResponse...", data?.refs);
     if (isQRResponse(data)) {
+      console.log("✅ [handleTransactionRequest] → QR code path triggered");
       onQRRequired?.({
         qrCodeUrl: data.refs.qr_png,
         websocketUrl: data.refs.websocket_status,
@@ -159,6 +225,7 @@ export const handleTransactionRequest = async ({
     }
 
     // If none of the above, treat as error
+    console.warn("⚠️ [handleTransactionRequest] No handler matched → falling to error:", data?.message || data?.error);
     onError?.(data?.message || data?.error || "Transaction failed. Please try again.");
     return data;
 

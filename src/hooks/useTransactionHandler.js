@@ -153,11 +153,22 @@ export const useTransactionHandler = ({
    * Shows a status message, triggers Crossmark popup, signs, then calls success or error.
    */
   const handleCrossmarkSigning = async ({ transaction, operationId, expirySeconds, offerType }) => {
+    console.log("🖊️ [handleCrossmarkSigning] Called with:", {
+      transaction,
+      operationId,
+      expirySeconds,
+      offerType,
+      myWalletAddress,
+    });
+
     try {
       setIsCrossmarkSigning(true);
       setCrossmarkMessage("Check your Crossmark extension to sign the transaction...");
 
-      const { txHash } = await signWithCrossmark(transaction);
+      console.log("🖊️ [handleCrossmarkSigning] Calling signWithCrossmark...");
+      const { txHash, response: crossmarkResponse } = await signWithCrossmark(transaction);
+
+      console.log("✅ [handleCrossmarkSigning] Signing succeeded:", { txHash, crossmarkResponse });
 
       setIsCrossmarkSigning(false);
       setCrossmarkMessage("");
@@ -166,13 +177,15 @@ export const useTransactionHandler = ({
 
       // Deduct mCredits after successful Crossmark signing
       if (myWalletAddress && offerType) {
+        console.log("💳 [handleCrossmarkSigning] Deducting mCredits:", { myWalletAddress, offerType });
         deductMCredit(myWalletAddress, offerType).then((response) => {
-          console.log("mCredit deduction result:", response);
+          console.log("💳 [handleCrossmarkSigning] mCredit deduction result:", response);
         });
       }
 
       onTransactionComplete?.();
     } catch (error) {
+      console.error("❌ [handleCrossmarkSigning] Error:", error);
       setIsCrossmarkSigning(false);
       setCrossmarkMessage("");
       showMessage("error", error?.message || "Crossmark transaction failed. Please try again.");
