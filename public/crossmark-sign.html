@@ -127,9 +127,12 @@
 
       console.log('[crossmark-sign] Transaction to sign:', transaction);
 
-      // Wait briefly for extension to inject (up to 2 seconds)
+      // Wait for extension to inject (up to 3 seconds, checks every 200ms)
+      // The extension injects window.xrpl.crossmark with .async and .sync SDK namespaces
       let attempts = 0;
-      while (!window.xrpl?.crossmark && attempts < 10) {
+      while (attempts < 15) {
+        const sdk = window.xrpl?.crossmark || window.crossmark;
+        if (sdk?.async?.signAndSubmitAndWait) break;
         await new Promise(r => setTimeout(r, 200));
         attempts++;
       }
@@ -138,6 +141,8 @@
       console.log('[crossmark-sign] window.xrpl?.crossmark:', window.xrpl?.crossmark);
       console.log('[crossmark-sign] window.crossmark:', window.crossmark);
 
+      // window.xrpl.crossmark IS the Crossmark SDK (injected by the extension)
+      // It exposes methods under .async and .sync namespaces
       const crossmark = window.xrpl?.crossmark || window.crossmark;
 
       if (!crossmark) {
@@ -152,28 +157,47 @@
       descEl.textContent = 'Please approve the transaction in your Crossmark extension popup.';
       setStatus('Waiting for your approval in Crossmark...', 'info');
 
+      // Verify the SDK namespaces are available
+      console.log('[crossmark-sign] crossmark.async:', crossmark.async);
+      console.log('[crossmark-sign] crossmark.sync:', crossmark.sync);
+
+      if (!crossmark.async?.signAndSubmitAndWait) {
+        const msg = 'Crossmark SDK API not available (missing async.signAndSubmitAndWait). Try refreshing.';
+        setStatus(msg, 'error');
+        sendToOpener({ type: 'CROSSMARK_ERROR', error: msg });
+        showClose();
+        return;
+      }
+
       try {
-        console.log('[crossmark-sign] Calling crossmark.signAndSubmit...');
-        const response = await crossmark.signAndSubmit(transaction);
-        console.log('[crossmark-sign] Raw Crossmark response:', response);
+        console.log('[crossmark-sign] Calling crossmark.async.signAndSubmitAndWait...');
+        // The SDK exposes methods under .async and .sync namespaces
+        // signAndSubmitAndWait waits for user approval and ledger confirmation
+        const result = await crossmark.async.signAndSubmitAndWait(transaction);
+        console.log('[crossmark-sign] Raw Crossmark result:', result);
+        console.log('[crossmark-sign] result.response:', result?.response);
+        console.log('[crossmark-sign] result.response.data:', result?.response?.data);
+
+        const responseData = result?.response?.data;
 
         // Handle rejection
-        const responseType = response?.type || response?.response?.type;
-        if (responseType === 'reject' || response?.cancelled) {
+        const responseType = result?.response?.type || result?.type;
+        if (responseType === 'reject' || responseData?.cancelled) {
           setStatus('Transaction rejected in Crossmark.', 'error');
           sendToOpener({ type: 'CROSSMARK_ERROR', error: 'Transaction was rejected in Crossmark wallet' });
           showClose();
           return;
         }
 
-        // Extract result - handle different SDK response shapes
-        const resp       = response?.response?.data?.resp;
-        const txResult   = resp?.result ?? resp ?? response?.result;
-        const txMeta     = txResult?.meta ?? response?.response?.data?.meta;
+        // Extract ledger result from response
+        // Crossmark response shape: result.response.data.resp.result (XRPL tx_json result)
+        const resp         = responseData?.resp;
+        const txResult     = resp?.result ?? resp;
+        const txMeta       = txResult?.meta ?? responseData?.meta;
         const txResultCode = txMeta?.TransactionResult;
 
+        console.log('[crossmark-sign] resp:', resp);
         console.log('[crossmark-sign] txResult:', txResult);
-        console.log('[crossmark-sign] txMeta:', txMeta);
         console.log('[crossmark-sign] TransactionResult:', txResultCode);
 
         if (txResultCode && txResultCode !== 'tesSUCCESS') {
@@ -184,18 +208,21 @@
           return;
         }
 
-        // Extract txHash from various possible locations
+        // Extract txHash — check multiple possible locations in the response
         const txHash =
-          txResult?.hash   ||
-          txResult?.Hash   ||
-          response?.response?.data?.hash ||
-          response?.hash;
+          txResult?.hash        ||
+          txResult?.Hash        ||
+          responseData?.hash    ||
+          responseData?.Hash    ||
+          result?.response?.hash;
+
+        console.log('[crossmark-sign] txHash:', txHash);
 
         setStatus('Transaction signed successfully! ✓', 'success');
         descEl.textContent = txHash ? `Hash: ${txHash.slice(0, 16)}...` : 'Success!';
         spinnerEl.style.display = 'none';
 
-        sendToOpener({ type: 'CROSSMARK_SUCCESS', txHash, response });
+        sendToOpener({ type: 'CROSSMARK_SUCCESS', txHash, response: result });
 
         // Close after short delay so user can see success
         setTimeout(() => window.close(), 1500);
