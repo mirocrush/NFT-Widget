@@ -22,10 +22,66 @@ export const isQRResponse = (data) => {
 };
 
 /**
+ * Check if response is a Crossmark unsigned transaction
+ * Backend returns unsigned tx that must be signed via Crossmark browser extension
+ */
+export const isCrossmarkResponse = (data) => {
+  return data?.result === "Success" && data?.wallet_provider === "crossmark" && data?.transaction;
+};
+
+/**
  * Check if response indicates insufficient credits
  */
 export const isInsufficientCredit = (data) => {
   return data?.result === "NotEnoughCredit";
+};
+
+/**
+ * Sign and submit a transaction using the Crossmark browser extension
+ *
+ * @param {Object} transaction - Unsigned XRPL transaction object from backend
+ * @returns {Promise<{ txHash: string }>} Resolved transaction hash
+ * @throws {Error} If Crossmark is not installed, user rejects, or tx fails
+ */
+export const signWithCrossmark = async (transaction) => {
+  // Check if Crossmark extension is installed
+  if (!window.xrpl?.crossmark) {
+    throw new Error(
+      "Crossmark wallet extension is not installed. Please install it from https://crossmark.io"
+    );
+  }
+
+  return new Promise((resolve, reject) => {
+    // Crossmark SDK: signAndSubmit sends tx to extension popup for user to sign
+    window.xrpl.crossmark.signAndSubmit(transaction, (error, response) => {
+      if (error) {
+        reject(new Error(error?.message || "Crossmark signing failed"));
+        return;
+      }
+
+      // User rejected the transaction in the extension
+      if (response?.type === "reject" || response?.cancelled) {
+        reject(new Error("Transaction was rejected in Crossmark wallet"));
+        return;
+      }
+
+      // Extract tx result from response
+      const txResult = response?.response?.data?.resp?.result;
+      const txMeta = txResult?.meta;
+
+      if (txMeta?.TransactionResult !== "tesSUCCESS") {
+        reject(
+          new Error(
+            `Transaction failed on ledger: ${txMeta?.TransactionResult || "Unknown error"}`
+          )
+        );
+        return;
+      }
+
+      const txHash = txResult?.hash || response?.response?.data?.resp?.result?.hash;
+      resolve({ txHash });
+    });
+  });
 };
 
 /**
@@ -47,6 +103,7 @@ export const handleTransactionRequest = async ({
   onSuccess,
   onError,
   onQRRequired,
+  onCrossmarkRequired,
   onInsufficientCredit,
   setLoading,
 }) => {
@@ -61,6 +118,18 @@ export const handleTransactionRequest = async ({
 
     const data = await response.json();
     setLoading?.(false);
+
+    // Check for Crossmark unsigned transaction (before general success check)
+    if (isCrossmarkResponse(data)) {
+      onCrossmarkRequired?.({
+        transaction: data.transaction,
+        operationId: data.operation_id,
+        expirySeconds: data.expiry_seconds,
+        message: data.message,
+        data,
+      });
+      return data;
+    }
 
     // Check for success response with transaction details
     if (isSuccessResponse(data)) {

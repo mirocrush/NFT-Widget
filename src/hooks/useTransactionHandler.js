@@ -7,6 +7,7 @@ import {
   isSuccessMessage,
   isRejectionMessage,
   getRejectionReason,
+  signWithCrossmark,
 } from "../utils/transactionHandler";
 
 /**
@@ -37,6 +38,10 @@ export const useTransactionHandler = ({
 
   // Offer type tracking
   const [createdOfferType, setCreatedOfferType] = useState("");
+
+  // Crossmark state
+  const [isCrossmarkSigning, setIsCrossmarkSigning] = useState(false);
+  const [crossmarkMessage, setCrossmarkMessage] = useState("");
 
   // WebSocket ref
   const wsRef = useRef(null);
@@ -144,6 +149,37 @@ export const useTransactionHandler = ({
   }, [websocketUrl, isQrModalVisible, createdOfferType]);
 
   /**
+   * Handle Crossmark unsigned transaction:
+   * Shows a status message, triggers Crossmark popup, signs, then calls success or error.
+   */
+  const handleCrossmarkSigning = async ({ transaction, operationId, expirySeconds, offerType }) => {
+    try {
+      setIsCrossmarkSigning(true);
+      setCrossmarkMessage("Check your Crossmark extension to sign the transaction...");
+
+      const { txHash } = await signWithCrossmark(transaction);
+
+      setIsCrossmarkSigning(false);
+      setCrossmarkMessage("");
+
+      showMessage("success", `Transaction signed successfully!\nTransaction Hash: ${txHash}`);
+
+      // Deduct mCredits after successful Crossmark signing
+      if (myWalletAddress && offerType) {
+        deductMCredit(myWalletAddress, offerType).then((response) => {
+          console.log("mCredit deduction result:", response);
+        });
+      }
+
+      onTransactionComplete?.();
+    } catch (error) {
+      setIsCrossmarkSigning(false);
+      setCrossmarkMessage("");
+      showMessage("error", error?.message || "Crossmark transaction failed. Please try again.");
+    }
+  };
+
+  /**
    * Execute transaction with common handling
    */
   const executeTransaction = async ({
@@ -172,6 +208,10 @@ export const useTransactionHandler = ({
         setWebsocketUrl(websocketUrl);
         setIsQrModalVisible(true);
       },
+      onCrossmarkRequired: ({ transaction, operationId, expirySeconds }) => {
+        // Immediately trigger Crossmark signing popup
+        handleCrossmarkSigning({ transaction, operationId, expirySeconds, offerType });
+      },
       onInsufficientCredit: () => {
         showMessage("error", insufficientCreditMessage);
       },
@@ -189,6 +229,10 @@ export const useTransactionHandler = ({
     messageBoxType,
     messageBoxText,
     createdOfferType,
+
+    // Crossmark states
+    isCrossmarkSigning,
+    crossmarkMessage,
 
     // Setters (for advanced use)
     setIsLoading,

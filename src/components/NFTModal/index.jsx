@@ -95,6 +95,8 @@ const NFTModal = ({
     executeTransaction,
     showMessage,
     closeQrModal,
+    isCrossmarkSigning,
+    crossmarkMessage,
   } = useTransactionHandler({
     myWalletAddress,
     onTransactionComplete: onAction,
@@ -622,10 +624,23 @@ const NFTModal = ({
             </div>
           </div>
 
-          {/* Non-blocking overlay */}
-          {isLoading && (
+          {/* Non-blocking overlay for regular loading */}
+          {isLoading && !isCrossmarkSigning && (
             <div className="pointer-events-none absolute inset-0 z-20">
               <LoadingOverlayForCard />
+            </div>
+          )}
+
+          {/* Crossmark signing overlay */}
+          {isCrossmarkSigning && (
+            <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/60 backdrop-blur-sm rounded-lg">
+              <div className="flex flex-col items-center gap-3 bg-gray-900 border border-blue-500/40 rounded-xl px-6 py-5 shadow-xl text-center">
+                <div className="w-10 h-10 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+                <p className="text-white font-semibold text-sm">Waiting for Crossmark</p>
+                <p className="text-gray-400 text-xs max-w-[200px]">
+                  {crossmarkMessage || "Check your Crossmark extension to sign the transaction..."}
+                </p>
+              </div>
             </div>
           )}
         </Box>
