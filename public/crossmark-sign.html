@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Crossmark Signing</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0f172a;
+      color: #f1f5f9;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 24px;
+    }
+    .card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 12px;
+      padding: 28px 24px;
+      max-width: 380px;
+      width: 100%;
+      text-align: center;
+    }
+    .logo {
+      width: 48px;
+      height: 48px;
+      background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+      border-radius: 12px;
+      margin: 0 auto 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+    }
+    h1 { font-size: 18px; font-weight: 700; margin-bottom: 8px; }
+    p  { font-size: 13px; color: #94a3b8; line-height: 1.5; margin-bottom: 20px; }
+    .spinner {
+      width: 32px; height: 32px;
+      border: 3px solid #334155;
+      border-top-color: #3b82f6;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 16px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .status {
+      font-size: 13px;
+      padding: 10px 14px;
+      border-radius: 8px;
+      margin-top: 12px;
+    }
+    .status.info    { background: #1e3a5f; color: #93c5fd; }
+    .status.success { background: #14432a; color: #86efac; }
+    .status.error   { background: #450a0a; color: #fca5a5; }
+    button {
+      margin-top: 16px;
+      padding: 10px 20px;
+      background: #3b82f6;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      width: 100%;
+    }
+    button:hover { background: #2563eb; }
+    button.danger { background: #dc2626; }
+    button.danger:hover { background: #b91c1c; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">✍️</div>
+    <h1>Sign Transaction</h1>
+    <p id="desc">Connecting to Crossmark wallet extension...</p>
+    <div class="spinner" id="spinner"></div>
+    <div class="status info" id="status">Initializing...</div>
+    <button id="closeBtn" onclick="window.close()" style="display:none" class="danger">Close Window</button>
+  </div>
+
+  <script>
+    const statusEl  = document.getElementById('status');
+    const descEl    = document.getElementById('desc');
+    const spinnerEl = document.getElementById('spinner');
+    const closeBtn  = document.getElementById('closeBtn');
+
+    function setStatus(msg, type = 'info') {
+      statusEl.textContent = msg;
+      statusEl.className = 'status ' + type;
+    }
+
+    function showClose() {
+      spinnerEl.style.display = 'none';
+      closeBtn.style.display = 'block';
+    }
+
+    function sendToOpener(data) {
+      if (window.opener) {
+        window.opener.postMessage(data, '*');
+      }
+    }
+
+    async function run() {
+      // Read transaction from URL hash
+      const hash = window.location.hash.slice(1);
+      if (!hash) {
+        setStatus('No transaction data found.', 'error');
+        descEl.textContent = 'This page should be opened by the NFT widget.';
+        showClose();
+        return;
+      }
+
+      let transaction;
+      try {
+        transaction = JSON.parse(decodeURIComponent(hash));
+      } catch (e) {
+        setStatus('Failed to parse transaction data.', 'error');
+        sendToOpener({ type: 'CROSSMARK_ERROR', error: 'Invalid transaction data' });
+        showClose();
+        return;
+      }
+
+      console.log('[crossmark-sign] Transaction to sign:', transaction);
+
+      // Wait briefly for extension to inject (up to 2 seconds)
+      let attempts = 0;
+      while (!window.xrpl?.crossmark && attempts < 10) {
+        await new Promise(r => setTimeout(r, 200));
+        attempts++;
+      }
+
+      console.log('[crossmark-sign] window.xrpl:', window.xrpl);
+      console.log('[crossmark-sign] window.xrpl?.crossmark:', window.xrpl?.crossmark);
+      console.log('[crossmark-sign] window.crossmark:', window.crossmark);
+
+      const crossmark = window.xrpl?.crossmark || window.crossmark;
+
+      if (!crossmark) {
+        const msg = 'Crossmark extension not found. Please install Crossmark.';
+        setStatus(msg, 'error');
+        descEl.textContent = 'Make sure the Crossmark extension is installed and enabled.';
+        sendToOpener({ type: 'CROSSMARK_ERROR', error: msg });
+        showClose();
+        return;
+      }
+
+      descEl.textContent = 'Please approve the transaction in your Crossmark extension popup.';
+      setStatus('Waiting for your approval in Crossmark...', 'info');
+
+      try {
+        console.log('[crossmark-sign] Calling crossmark.signAndSubmit...');
+        const response = await crossmark.signAndSubmit(transaction);
+        console.log('[crossmark-sign] Raw Crossmark response:', response);
+
+        // Handle rejection
+        const responseType = response?.type || response?.response?.type;
+        if (responseType === 'reject' || response?.cancelled) {
+          setStatus('Transaction rejected in Crossmark.', 'error');
+          sendToOpener({ type: 'CROSSMARK_ERROR', error: 'Transaction was rejected in Crossmark wallet' });
+          showClose();
+          return;
+        }
+
+        // Extract result - handle different SDK response shapes
+        const resp       = response?.response?.data?.resp;
+        const txResult   = resp?.result ?? resp ?? response?.result;
+        const txMeta     = txResult?.meta ?? response?.response?.data?.meta;
+        const txResultCode = txMeta?.TransactionResult;
+
+        console.log('[crossmark-sign] txResult:', txResult);
+        console.log('[crossmark-sign] txMeta:', txMeta);
+        console.log('[crossmark-sign] TransactionResult:', txResultCode);
+
+        if (txResultCode && txResultCode !== 'tesSUCCESS') {
+          const msg = `Transaction failed on ledger: ${txResultCode}`;
+          setStatus(msg, 'error');
+          sendToOpener({ type: 'CROSSMARK_ERROR', error: msg });
+          showClose();
+          return;
+        }
+
+        // Extract txHash from various possible locations
+        const txHash =
+          txResult?.hash   ||
+          txResult?.Hash   ||
+          response?.response?.data?.hash ||
+          response?.hash;
+
+        setStatus('Transaction signed successfully! ✓', 'success');
+        descEl.textContent = txHash ? `Hash: ${txHash.slice(0, 16)}...` : 'Success!';
+        spinnerEl.style.display = 'none';
+
+        sendToOpener({ type: 'CROSSMARK_SUCCESS', txHash, response });
+
+        // Close after short delay so user can see success
+        setTimeout(() => window.close(), 1500);
+
+      } catch (err) {
+        console.error('[crossmark-sign] Error:', err);
+        const msg = err?.message || 'Crossmark signing failed';
+        setStatus(msg, 'error');
+        sendToOpener({ type: 'CROSSMARK_ERROR', error: msg });
+        showClose();
+      }
+    }
+
+    run();
+  </script>
+</body>
+</html>

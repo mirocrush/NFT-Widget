@@ -163,10 +163,10 @@ export const useTransactionHandler = ({
 
     try {
       setIsCrossmarkSigning(true);
-      setCrossmarkMessage("Check your Crossmark extension to sign the transaction...");
+      setCrossmarkMessage("A popup window opened — please approve the transaction in Crossmark.");
 
-      console.log("🖊️ [handleCrossmarkSigning] Calling signWithCrossmark...");
-      const { txHash, response: crossmarkResponse } = await signWithCrossmark(transaction);
+      console.log("🖊️ [handleCrossmarkSigning] Calling signWithCrossmark with popup...");
+      const { txHash, response: crossmarkResponse } = await signWithCrossmark(transaction, expirySeconds);
 
       console.log("✅ [handleCrossmarkSigning] Signing succeeded:", { txHash, crossmarkResponse });
 

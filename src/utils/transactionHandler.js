@@ -60,71 +60,75 @@ export const isInsufficientCredit = (data) => {
  * @returns {Promise<{ txHash: string }>} Resolved transaction hash
  * @throws {Error} If Crossmark is not installed, user rejects, or tx fails
  */
-export const signWithCrossmark = async (transaction) => {
+export const signWithCrossmark = async (transaction, expirySeconds = 300) => {
   console.log("🔐 [signWithCrossmark] Starting...");
   console.log("🔐 [signWithCrossmark] window.xrpl:", window.xrpl);
-  console.log("🔐 [signWithCrossmark] window.xrpl?.crossmark:", window.xrpl?.crossmark);
-  console.log("🔐 [signWithCrossmark] transaction:", transaction);
+  console.log("🔐 [signWithCrossmark] Running in iframe?", window !== window.top);
 
-  // Check if Crossmark extension is installed
-  if (!window.xrpl?.crossmark) {
-    console.error("❌ [signWithCrossmark] Crossmark not found on window.xrpl.crossmark");
+  // Encode transaction into URL hash for the popup page
+  const txEncoded = encodeURIComponent(JSON.stringify(transaction));
+  const popupUrl = `${window.location.origin}/crossmark-sign.html#${txEncoded}`;
+
+  console.log("🪟 [signWithCrossmark] Opening popup:", popupUrl);
+
+  // Open a top-level popup window — extensions inject into top-level windows, not iframes
+  const popup = window.open(
+    popupUrl,
+    "crossmark-sign",
+    "width=420,height=300,top=100,left=100,resizable=no,scrollbars=no"
+  );
+
+  if (!popup || popup.closed) {
     throw new Error(
-      "Crossmark wallet extension is not installed. Please install it from https://crossmark.io"
+      "Popup was blocked. Please allow popups for this site to use Crossmark signing."
     );
   }
 
-  console.log("✅ [signWithCrossmark] Crossmark found, calling signAndSubmit...");
+  console.log("🪟 [signWithCrossmark] Popup opened, waiting for message...");
 
-  try {
-    // Crossmark SDK uses Promise-based API (not callbacks)
-    const response = await window.xrpl.crossmark.signAndSubmit(transaction);
+  return new Promise((resolve, reject) => {
+    const timeoutMs = (expirySeconds + 10) * 1000; // slight buffer over tx expiry
 
-    console.log("📦 [signWithCrossmark] Raw response from Crossmark:", response);
-    console.log("📦 [signWithCrossmark] response.type:", response?.type);
-    console.log("📦 [signWithCrossmark] response.response:", response?.response);
-    console.log("📦 [signWithCrossmark] response.response?.data:", response?.response?.data);
-    console.log("📦 [signWithCrossmark] response.response?.data?.resp:", response?.response?.data?.resp);
+    // Timeout guard
+    const timeout = setTimeout(() => {
+      window.removeEventListener("message", handleMessage);
+      if (!popup.closed) popup.close();
+      reject(new Error("Transaction signing timed out. Please try again."));
+    }, timeoutMs);
 
-    // User rejected the transaction in the extension
-    if (response?.type === "reject" || response?.cancelled || response?.response?.type === "reject") {
-      console.warn("⚠️ [signWithCrossmark] Transaction rejected by user");
-      throw new Error("Transaction was rejected in Crossmark wallet");
+    function handleMessage(event) {
+      // Only accept messages from our popup (same origin)
+      if (event.source !== popup) return;
+
+      console.log("📨 [signWithCrossmark] Message from popup:", event.data);
+
+      if (event.data?.type === "CROSSMARK_SUCCESS") {
+        clearTimeout(timeout);
+        window.removeEventListener("message", handleMessage);
+        console.log("✅ [signWithCrossmark] Success! txHash:", event.data.txHash);
+        resolve({ txHash: event.data.txHash, response: event.data.response });
+      }
+
+      if (event.data?.type === "CROSSMARK_ERROR") {
+        clearTimeout(timeout);
+        window.removeEventListener("message", handleMessage);
+        console.error("❌ [signWithCrossmark] Error from popup:", event.data.error);
+        reject(new Error(event.data.error || "Crossmark signing failed"));
+      }
     }
 
-    // Try multiple response paths Crossmark may use
-    const resp = response?.response?.data?.resp;
-    const txResult = resp?.result ?? resp;
-    const txMeta = txResult?.meta ?? response?.response?.data?.meta;
+    window.addEventListener("message", handleMessage);
 
-    console.log("📦 [signWithCrossmark] txResult:", txResult);
-    console.log("📦 [signWithCrossmark] txMeta:", txMeta);
-    console.log("📦 [signWithCrossmark] TransactionResult:", txMeta?.TransactionResult);
-
-    if (txMeta?.TransactionResult && txMeta.TransactionResult !== "tesSUCCESS") {
-      console.error("❌ [signWithCrossmark] Transaction failed on ledger:", txMeta.TransactionResult);
-      throw new Error(`Transaction failed on ledger: ${txMeta.TransactionResult}`);
-    }
-
-    // Extract hash from various possible locations
-    const txHash =
-      txResult?.hash ||
-      txResult?.Hash ||
-      response?.response?.data?.hash ||
-      response?.hash;
-
-    console.log("✅ [signWithCrossmark] Transaction successful! txHash:", txHash);
-    return { txHash, response };
-
-  } catch (error) {
-    // Re-throw errors we threw ourselves
-    if (error.message?.includes("rejected") || error.message?.includes("failed on ledger")) {
-      throw error;
-    }
-    // Wrap unexpected errors
-    console.error("❌ [signWithCrossmark] Unexpected error:", error);
-    throw new Error(error?.message || "Crossmark signing failed");
-  }
+    // Also detect if user manually closed the popup
+    const closedPoll = setInterval(() => {
+      if (popup.closed) {
+        clearInterval(closedPoll);
+        clearTimeout(timeout);
+        window.removeEventListener("message", handleMessage);
+        reject(new Error("Signing cancelled: popup was closed."));
+      }
+    }, 500);
+  });
 };
 
 /**
