@@ -35,8 +35,8 @@ const OfferMadeCard = ({ sellOffer, index, onAction, myWalletAddress }) => {
       // Path 1: Non-broker destination - use QR flow
       if (sellOffer.offer.destination !== API_URLS.brokerWalletAddress) {
         const requestBody = {
-          owner: myWalletAddress,
-          account: sellOffer.offer.offerOwner,
+          owner: sellOffer.offer.offerOwner,
+          account: myWalletAddress,
           offerId: sellOffer.offer.offerId,
         };
         console.log(requestBody, "requestBody");

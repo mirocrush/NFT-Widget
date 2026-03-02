@@ -241,8 +241,8 @@ const OfferReceivedCard = ({
     // Path 2: Received sell offer - cancel with signature (requires QR)
     else {
       const requestBody = {
-        owner: myWalletAddress,
-        account: buyOffer.offer.offerOwner,
+        owner: buyOffer.offer.offerOwner,
+        account: myWalletAddress,
         offerId: buyOffer.offer.offerId,
       };
       console.log(requestBody, "requestBody");

@@ -95,8 +95,8 @@ const IncomingOfferCard = ({
     setRommMessage("");
 
     const requestBody = {
-      owner: myWalletAddress,
-      account: transfer.offer.offerOwner,
+      owner: transfer.offer.offerOwner,
+      account: myWalletAddress,
       offerId: transfer.offer.offerId,
     };
     console.log(requestBody, "requestBody");
